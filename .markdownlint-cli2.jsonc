@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint/main/schema/markdownlint-config-schema.json",
+  "config": {
+    "MD013": false,
+    "MD033": {
+      "allowed_elements": ["h1", "p", "img"],
+    },
+    "MD041": false,
+  },
+  "gitignore": true,
+  "globs": ["**/*.{md,mdx}"],
+  "ignores": [".agents/**"],
+}

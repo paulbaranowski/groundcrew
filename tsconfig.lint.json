@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmitOnError": false,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["packages", "scripts"],
+  "exclude": ["coverage", "dist", "node_modules", "**/dist"]
+}

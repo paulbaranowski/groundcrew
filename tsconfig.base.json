@@ -1,0 +1,13 @@
+{
+  "extends": ["@tsconfig/strictest", "@tsconfig/node24"],
+  "compilerOptions": {
+    "composite": true,
+    "customConditions": ["@clipboard/source"],
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "erasableSyntaxOnly": true,
+    "importHelpers": true,
+    "moduleResolution": "nodenext",
+    "noEmitOnError": true
+  }
+}

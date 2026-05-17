@@ -1,0 +1,20 @@
+{
+  "threshold": 0,
+  "reporters": ["console"],
+  "ignore": [
+    ".agents",
+    ".nx",
+    ".agents",
+    "AGENTS.md",
+    "**/vitest.config.mts",
+    "**/tsconfig.spec.json",
+    "**/tsconfig.lib.json",
+    "**/package.json",
+    "**/bin/runCli.js",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/examples/**"
+  ],
+  "absolute": false,
+  "gitignore": true
+}

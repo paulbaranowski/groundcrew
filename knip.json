@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreDependencies": ["tslib"],
+  "ignoreBinaries": ["tsx"],
+  "workspaces": {
+    ".": {
+      "entry": ["vitest.shared.ts"]
+    },
+    "packages/clearance": {
+      "entry": ["bin/*.js", "src/cli.ts", "src/ensureCli.ts"]
+    },
+    "packages/groundcrew": {
+      "entry": ["bin/*.js", "configExample.ts", "src/main.ts"]
+    }
+  }
+}

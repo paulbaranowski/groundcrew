@@ -1,0 +1,27 @@
+# Alphabetical directories
+.cache/
+.nx/cache
+.nx/tsbuildinfo
+.nx/workspace-data
+coverage/
+data/
+dist/
+node_modules/
+out-tsc/
+packages/*/dist/
+packages/*/test-output/
+tmp/
+
+# Alphabetical files
+*.1password.env
+.claude/*.local.*
+.claude/worktrees
+.DS_Store
+.env
+.nx/polygraph
+CLAUDE.local.md
+packages/*/plans/
+tsconfig.tsbuildinfo
+vitest.config.*.timestamp*
+
+.nx/self-healing

@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
+      "!{projectRoot}/tsconfig.spec.json"
+    ],
+    "sharedGlobals": [
+      "{workspaceRoot}/.github/workflows/ci.yml",
+      "{workspaceRoot}/.oxfmtrc.json",
+      "{workspaceRoot}/oxlint.config.ts",
+      "{workspaceRoot}/tsconfig.lint.json",
+      "{workspaceRoot}/vitest.shared.ts"
+    ]
+  },
+  "nxCloudId": "69b868d29487aa6227f467b0",
+  "plugins": [
+    {
+      "plugin": "@nx/js/typescript",
+      "options": {
+        "compiler": "tsgo",
+        "build": {
+          "targetName": "build",
+          "configName": "tsconfig.lib.json",
+          "buildDepsName": "build-deps",
+          "watchDepsName": "watch-deps"
+        }
+      }
+    },
+    {
+      "plugin": "@nx/vitest",
+      "options": {
+        "testTargetName": "test",
+        "ciTargetName": "test-ci",
+        "testMode": "watch"
+      }
+    }
+  ],
+  "targetDefaults": {
+    "test": {
+      "dependsOn": ["^build"],
+      "configurations": {
+        "ci": {
+          "coverage": true
+        }
+      }
+    }
+  },
+  "analytics": false
+}
