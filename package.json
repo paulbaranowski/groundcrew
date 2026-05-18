@@ -72,7 +72,7 @@
   },
   "devDependencies": {
     "@clipboard-health/ai-rules": "2.18.4",
-    "@clipboard-health/oxlint-config": "1.7.0",
+    "@clipboard-health/oxlint-config": "1.7.3",
     "@nx/js": "22.7.1",
     "@tsconfig/node24": "24.0.4",
     "@tsconfig/strictest": "2.0.8",
