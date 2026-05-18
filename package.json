@@ -87,7 +87,7 @@
     "lint-staged": "16.4.0",
     "markdownlint-cli2": "0.22.1",
     "nx": "22.7.1",
-    "oxfmt": "0.47.0",
+    "oxfmt": "0.49.0",
     "oxlint": "1.60.0",
     "oxlint-tsgolint": "0.21.1",
     "syncpack": "15.0.0",
