@@ -23,6 +23,11 @@ export interface WorkspaceStatus {
   icon?: string;
 }
 
+export interface WorkspaceAccessHint {
+  kind: "attachCommand";
+  command: string;
+}
+
 export interface OpenSpec {
   /** Ticket id; becomes the workspace's name. */
   name: string;
@@ -54,10 +59,10 @@ interface Adapter {
   /** No-op when no workspace exists for `name`. */
   close(name: string, signal?: AbortSignal): Promise<void>;
   /**
-   * Shell-attach hint for the workspace, or `undefined` when the backend
-   * has no equivalent (e.g. cmux surfaces workspaces in its own UI).
+   * User-facing way to reach the workspace, or `undefined` when the backend
+   * has no concise external hint.
    */
-  attachHint(name: string): string | undefined;
+  accessHint(name: string): WorkspaceAccessHint | undefined;
 }
 
 async function runWorkspaceCommand(
@@ -223,7 +228,7 @@ const cmuxAdapter: Adapter = {
       throw error;
     }
   },
-  attachHint(_name) {
+  accessHint(_name) {
     // cmux is a TUI; users surface workspaces by launching the cmux app,
     // not a shell command. No useful hint to emit.
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that the backend has no hint
@@ -296,6 +301,10 @@ const TMUX_SESSION = "groundcrew";
 // sentinel and filter it out — it stays around as a placeholder so the
 // session doesn't collapse when the last ticket window closes.
 const TMUX_IDLE_WINDOW = "_groundcrew_idle";
+
+function tmuxTarget(name: string): string {
+  return `${TMUX_SESSION}:${name}`;
+}
 
 function isTmuxNotFoundError(error: unknown): boolean {
   // runCommand surfaces the child's stderr in error.message, so the "no
@@ -391,7 +400,7 @@ function parseTmuxWindows(output: string): Workspace[] {
 const tmuxAdapter: Adapter = {
   async open(spec, signal) {
     await ensureTmuxSession(signal);
-    const target = `${TMUX_SESSION}:${spec.name}`;
+    const target = tmuxTarget(spec.name);
     const keepDeadWindowsEnv = readEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
     const keepDeadWindows = keepDeadWindowsEnv !== undefined && keepDeadWindowsEnv.length > 0;
     await runWorkspaceCommand(
@@ -437,7 +446,7 @@ const tmuxAdapter: Adapter = {
   },
   async close(name, signal) {
     try {
-      await runWorkspaceCommand("tmux", ["kill-window", "-t", `${TMUX_SESSION}:${name}`], signal);
+      await runWorkspaceCommand("tmux", ["kill-window", "-t", tmuxTarget(name)], signal);
     } catch (error) {
       if (isSignalAborted(signal)) {
         throw error;
@@ -448,8 +457,8 @@ const tmuxAdapter: Adapter = {
       throw error;
     }
   },
-  attachHint(name) {
-    return `tmux attach -t ${TMUX_SESSION}:${name}`;
+  accessHint(name) {
+    return { kind: "attachCommand", command: `tmux attach -t ${tmuxTarget(name)}` };
   },
 };
 
@@ -502,12 +511,12 @@ export const workspaces = {
     const adapter = await adapterFor(config, signal);
     await adapter.close(name, signal);
   },
-  async attachHint(
+  async accessHint(
     config: ResolvedConfig,
     name: string,
     signal?: AbortSignal,
-  ): Promise<string | undefined> {
+  ): Promise<WorkspaceAccessHint | undefined> {
     const adapter = await adapterFor(config, signal);
-    return adapter.attachHint(name);
+    return adapter.accessHint(name);
   },
 };

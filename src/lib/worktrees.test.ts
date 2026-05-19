@@ -40,7 +40,7 @@ vi.mock(import("./workspaces.ts"), async (importOriginal) => {
       open: vi.fn<typeof actual.workspaces.open>(),
       probe: vi.fn<typeof actual.workspaces.probe>(),
       close: vi.fn<typeof actual.workspaces.close>(),
-      attachHint: vi.fn<typeof actual.workspaces.attachHint>(),
+      accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
     },
   };
 });
