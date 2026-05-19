@@ -5,4 +5,22 @@ export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.t
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
 export type { Config, ModelDefinition, ResolvedConfig } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
+export {
+  fetchBlockersForTicket,
+  fetchInProgressIssueCount,
+  fetchRawLinearIssue,
+  fetchResolvedIssue,
+  resolveModelFor,
+  resolveRepositoryFor,
+  type ModelResolution,
+  type RawLinearIssue,
+  type RepositoryResolution,
+} from "./lib/boardSource.ts";
 export { getUsageByModel, type UsageByModel } from "./lib/usage.ts";
+export {
+  ticketDoctor,
+  type TicketCheck,
+  type TicketDoctorDependencies,
+  type TicketDoctorResult,
+  type TicketDoctorVerdict,
+} from "./commands/ticketDoctor.ts";

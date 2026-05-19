@@ -1,7 +1,16 @@
 import type { LinearClient } from "@linear/sdk";
 
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
-import { createBoardSource, fetchResolvedIssue, isTerminalStatus } from "./boardSource.ts";
+import {
+  createBoardSource,
+  fetchBlockersForTicket,
+  fetchInProgressIssueCount,
+  fetchRawLinearIssue,
+  fetchResolvedIssue,
+  isTerminalStatus,
+  resolveModelFor,
+  resolveRepositoryFor,
+} from "./boardSource.ts";
 import type { ResolvedConfig } from "./config.ts";
 
 interface IssueNodeStub {
@@ -101,9 +110,14 @@ interface ClientStub {
   client: { rawRequest: ReturnType<typeof vi.fn<RawRequest>> };
 }
 
-function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][] }): ClientStub {
-  const { projectFound = true, pages = [[]] } = options;
+function makeClient(options: {
+  projectFound?: boolean;
+  pages?: IssueNodeStub[][];
+  activePages?: number[];
+}): ClientStub {
+  const { projectFound = true, pages = [[]], activePages = [0] } = options;
   let boardCallIndex = 0;
+  let activeCallIndex = 0;
   const rawRequest = vi.fn<RawRequest>(async (query: string) => {
     if (query.includes("VerifyProject")) {
       return {
@@ -128,6 +142,22 @@ function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][]
         },
       };
     }
+    if (query.includes("InProgressIssues")) {
+      const index = activeCallIndex;
+      activeCallIndex += 1;
+      const count = activePages[index] ?? 0;
+      const hasNext = index < activePages.length - 1;
+      return {
+        data: {
+          issues: {
+            nodes: Array.from({ length: count }, (_value, nodeIndex) => ({
+              id: `active-${index}-${nodeIndex}`,
+            })),
+            pageInfo: { hasNextPage: hasNext, endCursor: hasNext ? `active-cursor-${index}` : "" },
+          },
+        },
+      };
+    }
     if (query.includes("ResolveIssue")) {
       return {
         data: {
@@ -137,6 +167,7 @@ function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][]
             description: "Touches repo-a.",
             team: { id: "team-default" },
             labels: { nodes: [] },
+            state: { name: "Todo" },
           },
         },
       };
@@ -673,6 +704,38 @@ describe(fetchResolvedIssue, () => {
 
     expect(actual.teamId).toBe("");
   });
+
+  it("falls back to models.default when the label refers to a disabled shipped default", async () => {
+    const configWithCodexDisabled = makeConfig({
+      models: {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+        },
+      },
+    });
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          id: "uuid-1",
+          title: "Title",
+          description: "Touches repo-a.",
+          team: { id: "team-default" },
+          labels: { nodes: [{ name: "agent-codex" }] },
+        },
+      },
+    });
+
+    const actual = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config: configWithCodexDisabled,
+      ticket: "team-1",
+    });
+
+    expect(actual.model).toBe("claude");
+  });
 });
 
 describe(isTerminalStatus, () => {
@@ -707,5 +770,354 @@ describe(isTerminalStatus, () => {
     const config = makeConfig();
     expect(isTerminalStatus("Todo", config)).toBe(false);
     expect(isTerminalStatus("In Progress", config)).toBe(false);
+  });
+});
+
+describe(fetchRawLinearIssue, () => {
+  it("returns the raw fields when the ticket exists", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          id: "uuid-42",
+          title: "Fix the thing",
+          description: "Touches herds-social/herds.",
+          team: { id: "team-hrd" },
+          state: { name: "In Review" },
+          labels: { nodes: [{ name: "agent-claude" }, { name: "feature" }] },
+        },
+      },
+    });
+
+    const result = await fetchRawLinearIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "hrd-1",
+    });
+
+    expect(result.uuid).toBe("uuid-42");
+    expect(result.title).toBe("Fix the thing");
+    expect(result.description).toBe("Touches herds-social/herds.");
+    expect(result.teamId).toBe("team-hrd");
+    expect(result.stateName).toBe("In Review");
+    expect(result.labels).toStrictEqual([{ name: "agent-claude" }, { name: "feature" }]);
+    expect(result.blockers).toStrictEqual([]);
+    expect(result.hasMoreBlockers).toBe(false);
+  });
+
+  it("coerces a null description to an empty string", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          id: "uuid-43",
+          title: "No description",
+          description: null,
+          team: { id: "team-hrd" },
+          state: { name: "Todo" },
+          labels: { nodes: [] },
+        },
+      },
+    });
+
+    const result = await fetchRawLinearIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "hrd-2",
+    });
+
+    expect(result.description).toBe("");
+  });
+
+  it("throws a not-found error when the issue is null", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: { issue: null },
+    });
+
+    await expect(
+      fetchRawLinearIssue({
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        client: client as unknown as LinearClient,
+        ticket: "hrd-1",
+      }),
+    ).rejects.toThrow(/HRD-1 not found in Linear/);
+  });
+});
+
+describe(fetchInProgressIssueCount, () => {
+  it("counts matching in-progress tickets", async () => {
+    const config = makeConfig();
+    const client = makeClient({ pages: [[]], activePages: [2] });
+
+    const result = await fetchInProgressIssueCount({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config,
+    });
+
+    expect(result).toBe(2);
+  });
+
+  it("paginates across in-progress tickets", async () => {
+    const config = makeConfig();
+    const client = makeClient({ pages: [[]], activePages: [2, 3] });
+
+    const result = await fetchInProgressIssueCount({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config,
+    });
+
+    expect(result).toBe(5);
+  });
+});
+
+describe(resolveRepositoryFor, () => {
+  it("returns the repository when the description mentions a known one", () => {
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+    });
+    const result = resolveRepositoryFor({
+      description: "fix the herds-social/herds bug",
+      config,
+      ticket: "HRD-1",
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "herds-social/herds" });
+  });
+
+  it("returns missing when no known repo is in the description", () => {
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+    });
+    expect(
+      resolveRepositoryFor({ description: "nothing here", config, ticket: "HRD-1" }).kind,
+    ).toBe("missing");
+  });
+
+  it("returns missing on empty description", () => {
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+    });
+    expect(resolveRepositoryFor({ description: "", config, ticket: "HRD-1" }).kind).toBe("missing");
+  });
+
+  it("returns missing on undefined description", () => {
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+    });
+    expect(resolveRepositoryFor({ description: undefined, config, ticket: "HRD-1" }).kind).toBe(
+      "missing",
+    );
+  });
+});
+
+describe(resolveModelFor, () => {
+  it("returns matched when label corresponds to a known model", () => {
+    const config = makeConfig();
+    const result = resolveModelFor({ labels: [{ name: "agent-claude" }], config });
+    expect(result).toStrictEqual({ kind: "matched", model: "claude" });
+  });
+
+  it("returns no-label when no agent-* label is present", () => {
+    const config = makeConfig();
+    const result = resolveModelFor({ labels: [{ name: "feature" }], config });
+    expect(result.kind).toBe("no-label");
+  });
+
+  it("returns no-label when the labels array is empty", () => {
+    const config = makeConfig();
+    const result = resolveModelFor({ labels: [], config });
+    expect(result.kind).toBe("no-label");
+  });
+
+  it("returns agent-any when the label is agent-any", () => {
+    const config = makeConfig();
+    const result = resolveModelFor({ labels: [{ name: "agent-any" }], config });
+    expect(result.kind).toBe("agent-any");
+  });
+
+  it("returns disabled-fallback when the label matches a disabled shipped default", () => {
+    // codex is absent from definitions (simulating `disabled: true`) but IS a
+    // shipped default, so isShippedDefaultDisabled returns true for it.
+    const configWithCodexDisabled = makeConfig({
+      models: {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+        },
+      },
+    });
+    const result = resolveModelFor({
+      labels: [{ name: "agent-codex" }],
+      config: configWithCodexDisabled,
+    });
+    expect(result).toStrictEqual({
+      kind: "disabled-fallback",
+      requestedModel: "codex",
+      fallbackModel: "claude",
+    });
+  });
+});
+
+describe(fetchBlockersForTicket, () => {
+  it("returns blockers whose type is 'blocks'", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: { identifier: "HRD-10", title: "Blocker A", state: { name: "In Progress" } },
+              },
+              {
+                type: "blocked-by",
+                issue: {
+                  identifier: "HRD-11",
+                  title: "Not a blocker",
+                  state: { name: "In Progress" },
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: "" },
+          },
+        },
+      },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-1",
+      uuid: "uuid-1",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toStrictEqual({ id: "hrd-10", title: "Blocker A", status: "In Progress" });
+  });
+
+  it("returns blockers from every relation page", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            inverseRelations: {
+              nodes: [
+                {
+                  type: "blocks",
+                  issue: {
+                    identifier: "HRD-10",
+                    title: "Blocker A",
+                    state: { name: "In Progress" },
+                  },
+                },
+              ],
+              pageInfo: { hasNextPage: true, endCursor: "blockers-cursor-1" },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            inverseRelations: {
+              nodes: [
+                {
+                  type: "blocks",
+                  issue: { identifier: "HRD-20", title: "Blocker B", state: { name: "Todo" } },
+                },
+              ],
+              pageInfo: { hasNextPage: false, endCursor: "" },
+            },
+          },
+        },
+      });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-1",
+      uuid: "uuid-1",
+    });
+
+    expect(result).toStrictEqual([
+      { id: "hrd-10", title: "Blocker A", status: "In Progress" },
+      { id: "hrd-20", title: "Blocker B", status: "Todo" },
+    ]);
+    expect(client.client.rawRequest).toHaveBeenNthCalledWith(1, expect.any(String), {
+      after: null,
+      id: "uuid-1",
+    });
+    expect(client.client.rawRequest).toHaveBeenNthCalledWith(2, expect.any(String), {
+      after: "blockers-cursor-1",
+      id: "uuid-1",
+    });
+  });
+
+  it("returns an empty array when the issue is null", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: { issue: null },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-1",
+      uuid: "uuid-missing",
+    });
+
+    expect(result).toStrictEqual([]);
+  });
+
+  it("returns an empty array when there are no blocking relations", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: "" } },
+        },
+      },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-2",
+      uuid: "uuid-2",
+    });
+
+    expect(result).toStrictEqual([]);
+  });
+
+  it("coerces a null issue state to undefined status", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: { identifier: "HRD-20", title: "No state", state: null },
+              },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: "" },
+          },
+        },
+      },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-3",
+      uuid: "uuid-3",
+    });
+
+    expect(result[0]?.status).toBeUndefined();
   });
 });

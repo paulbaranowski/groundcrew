@@ -92,6 +92,7 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
    ```bash
    crew doctor
+   crew doctor --ticket TEAM-123
    crew run --dry-run
    crew run            # one-shot
    crew run --watch    # poll forever
@@ -162,15 +163,71 @@ Rules:
 ## Manual commands
 
 ```bash
+crew doctor --ticket <TICKET>
 crew run --ticket <TICKET>
 crew setup repos [--dry-run] [<repo>...]
 crew cleanup <TICKET>
 ```
 
+`crew doctor --ticket <TICKET>` diagnoses one Linear ticket without provisioning it. It checks the same resolution inputs that decide whether the orchestrator can see the ticket — Todo status, `agent-*` label, model resolution, repository mention, local clone — then checks blockers, model session usage, and available in-progress capacity.
+
 `crew run --ticket <TICKET>` provisions a single ticket the same way the orchestrator would: the repo is parsed from the ticket's Linear description and the model comes from the ticket's `agent-*` label (manual setup falls back to `models.default` for unlabeled tickets). If the description does not mention a repo from `workspace.knownRepositories`, setup fails before provisioning. `--watch` and `--ticket` are mutually exclusive — `--watch` drives the orchestrator loop; `--ticket` provisions one ticket and exits. `crew cleanup <TICKET>` resolves to every tracked worktree carrying that ticket id (across repos) and tears them all down. To inspect codexbar session windows directly, run `codexbar usage`; the orchestrator already gates on this internally via `orchestrator.sessionLimitPercentage`.
+
+### `crew doctor --ticket <ticket>`
+
+Diagnose why a ticket would or wouldn't be dispatched on the next orchestrator tick. Runs the same resolution and eligibility chain as the dispatcher, but for a single ticket, and prints a tree of pass/fail checks.
+
+```bash
+crew doctor --ticket HRD-446
+```
+
+Exits 0 if the ticket would dispatch, 1 otherwise. Useful when you've labelled a ticket with `agent-claude` and it doesn't show up on the board.
+
+Example output for a ticket that would dispatch:
+
+```text
+groundcrew doctor --ticket HRD-446 (Add retry logic to the sync job)
+────────────────────────────────────────────────────────────────────
+
+Resolution
+  [ok] Ticket exists in Linear ("Add retry logic to the sync job")
+  [ok] Status is Todo
+  [ok] Has agent-* label (agent-claude)
+  [ok] Model resolves from agent-* label (model "claude")
+  [ok] Description mentions known repo (owner/repo)
+  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+
+Eligibility
+  [ok] No active blockers
+  [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
+  [ok] In-progress cap not hit (2/4 used)
+
+→ would be dispatched on next tick
+```
+
+Example output for a ticket that's not in the Todo status:
+
+```text
+groundcrew doctor --ticket HRD-447 (Refactor auth middleware)
+─────────────────────────────────────────────────────────────
+
+Resolution
+  [ok] Ticket exists in Linear ("Refactor auth middleware")
+  [--] Status is Todo (current: In Progress)
+  [ok] Has agent-* label (agent-claude)
+  [ok] Model resolves from agent-* label (model "claude")
+  [ok] Description mentions known repo (owner/repo)
+  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+
+Eligibility
+  (skipped — resolution checks failed)
+
+→ ineligible: status is In Progress (need Todo)
+```
 
 ## Gotchas
 
+- **Ticket labeled but not on the board?** Run `crew doctor --ticket <ticket>` — it lists every check the dispatcher runs and flags the failing one.
 - **Local execution picks one of safehouse/sdx/none.** `local.runner: "auto"` resolves to `safehouse` on macOS and `sdx` (Docker Sandboxes) on Linux/WSL. Override with `local.runner: "safehouse" | "sdx" | "none"`. There is no per-model `isolation` knob anymore — the runner is global. `sdx` requires a per-model `sandbox: { agent }` block so groundcrew can map the model to an sbx agent.
 - **Safehouse-already-wrapped commands are not re-wrapped.** If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew assumes that command owns its Safehouse flags and does not add the `safehouse-clearance` wrapper a second time. Changing the proxy's allowlist after it's running requires killing the PID in `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.pid` so the next launch picks up the new env.
 - **Sandbox lifecycle is create-only.** Groundcrew auto-creates the sandbox for a `<repository, model>` pair when missing, but never deletes one — sandboxes persist across tickets and across `crew cleanup`. Auth state lives inside the sandbox, so deleting it forces a re-login. Inspect or remove them manually with `sbx ls` / `sbx rm`.

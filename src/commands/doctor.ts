@@ -15,6 +15,7 @@ import { detectHostCapabilities, type HostCapabilities, which } from "../lib/hos
 import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
+import { runTicketDoctor } from "./ticketDoctor.ts";
 
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
@@ -25,6 +26,10 @@ interface Check {
   ok: boolean;
   required: boolean;
   hint?: string;
+}
+
+export interface DoctorOptions {
+  ticket?: string;
 }
 
 async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<Check> {
@@ -143,7 +148,27 @@ function format(check: Check): string {
   return `${tag}${check.name}${hint}`;
 }
 
-export async function doctor(): Promise<boolean> {
+export async function doctor(options: DoctorOptions = {}): Promise<boolean> {
+  if (options.ticket !== undefined) {
+    return await doctorTicket(options.ticket);
+  }
+  return await doctorHost();
+}
+
+async function doctorTicket(ticket: string): Promise<boolean> {
+  try {
+    return await runTicketDoctor(ticket);
+  } catch (error) {
+    const displayTicket = ticket.toUpperCase();
+    const header = `groundcrew doctor --ticket ${displayTicket}`;
+    writeOutput(header);
+    writeOutput("=".repeat(header.length));
+    writeOutput(`[--] config: ${errorMessage(error)}`);
+    return false;
+  }
+}
+
+async function doctorHost(): Promise<boolean> {
   writeOutput("groundcrew doctor");
   writeOutput("=================");
 
