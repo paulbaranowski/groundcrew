@@ -57,6 +57,9 @@ function makeStubDependencies(
     fetchRawIssue: vi
       .fn<TicketDoctorDependencies["fetchRawIssue"]>()
       .mockResolvedValue(makeStubRawIssue()),
+    fetchBlockersFor: vi.fn<TicketDoctorDependencies["fetchBlockersFor"]>().mockResolvedValue([]),
+    fetchUsage: vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({}),
+    countInProgress: vi.fn<TicketDoctorDependencies["countInProgress"]>().mockResolvedValue(0),
     ...overrides,
   };
 }
@@ -339,5 +342,254 @@ describe("ticketDoctor — env checks", () => {
       (check) => check.name === "Resolved repo is cloned locally",
     );
     expect(repoDir?.status).toBe("skipped");
+  });
+});
+
+describe("ticketDoctor — eligibility phase", () => {
+  /** Build a fully-passing stub set: all resolution checks pass and all
+   *  eligibility checks pass by default. Individual tests override only the
+   *  dimension under test.
+   */
+  function makeFullStub(
+    overrides: Partial<TicketDoctorDependencies> = {},
+  ): TicketDoctorDependencies {
+    return {
+      config: makeConfig({
+        orchestrator: {
+          maximumInProgress: 2,
+          pollIntervalMilliseconds: 1000,
+          sessionLimitPercentage: 85,
+        },
+        workspace: { projectDir: "/tmp", knownRepositories: ["herds-social/herds"] },
+        models: {
+          default: "claude",
+          definitions: { claude: { cmd: "claude", color: "#fff" } },
+        },
+      }),
+      ticket: "HRD-1",
+      fetchRawIssue: vi.fn<TicketDoctorDependencies["fetchRawIssue"]>().mockResolvedValue({
+        uuid: "uuid-1",
+        title: "X",
+        description: "see herds-social/herds",
+        teamId: "team-1",
+        labels: [{ name: "agent-claude" }],
+        stateName: "Todo",
+      }),
+      fetchBlockersFor: vi.fn<TicketDoctorDependencies["fetchBlockersFor"]>().mockResolvedValue([]),
+      // session: 0.23 = 23%, limit: 85% → under limit → ok
+      fetchUsage: vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({
+        claude: { session: 0.23, sessionEndDuration: null, weekly: null, weekEndDuration: null },
+      }),
+      countInProgress: vi.fn<TicketDoctorDependencies["countInProgress"]>().mockResolvedValue(0),
+      ...overrides,
+    };
+  }
+
+  it("returns would-dispatch when all resolution and eligibility checks pass", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-el-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    try {
+      const dependencies = makeFullStub({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 2,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+          workspace: {
+            projectDir,
+            knownRepositories: ["herds-social/herds"],
+          },
+          models: {
+            default: "claude",
+            definitions: { claude: { cmd: "claude", color: "#fff" } },
+          },
+        }),
+      });
+      const result = await ticketDoctor(dependencies);
+      expect(result.verdict.kind).toBe("would-dispatch");
+      expect(result.eligibility).toHaveLength(3);
+      expect(result.eligibility.every((c) => c.status === "ok")).toBe(true);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags blocker check as fail when fetchBlockersFor returns a non-terminal blocker", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-el-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    try {
+      const dependencies = makeFullStub({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 2,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+          workspace: {
+            projectDir,
+            knownRepositories: ["herds-social/herds"],
+          },
+          models: {
+            default: "claude",
+            definitions: { claude: { cmd: "claude", color: "#fff" } },
+          },
+          linear: {
+            projectSlug: "ai-strategy-aaaaaaaaaaaa",
+            slugId: "aaaaaaaaaaaa",
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Done",
+              terminal: ["Done"],
+            },
+          },
+        }),
+        fetchBlockersFor: vi
+          .fn<TicketDoctorDependencies["fetchBlockersFor"]>()
+          .mockResolvedValue([{ id: "HRD-2", title: "Blocking ticket", status: "In Progress" }]),
+      });
+      const result = await ticketDoctor(dependencies);
+      const check = result.eligibility.find((c) => c.name === "No active blockers");
+      expect(check?.status).toBe("fail");
+      expect(result.verdict).toMatchObject({ kind: "ineligible", reason: "No active blockers" });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags model usage check as fail when session is over the limit", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-el-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    try {
+      const dependencies = makeFullStub({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 2,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+          workspace: {
+            projectDir,
+            knownRepositories: ["herds-social/herds"],
+          },
+          models: {
+            default: "claude",
+            definitions: { claude: { cmd: "claude", color: "#fff" } },
+          },
+        }),
+        // session: 0.90 = 90% > 85% limit → fail
+        fetchUsage: vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({
+          claude: { session: 0.9, sessionEndDuration: null, weekly: null, weekEndDuration: null },
+        }),
+      });
+      const result = await ticketDoctor(dependencies);
+      const check = result.eligibility.find(
+        (c) => c.name === 'Model "claude" usage under sessionLimitPercentage',
+      );
+      expect(check?.status).toBe("fail");
+      expect(result.verdict).toMatchObject({
+        kind: "ineligible",
+        reason: 'Model "claude" usage under sessionLimitPercentage',
+      });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags in-progress cap check as fail when cap is already reached", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-el-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    try {
+      const dependencies = makeFullStub({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 2,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+          workspace: {
+            projectDir,
+            knownRepositories: ["herds-social/herds"],
+          },
+          models: {
+            default: "claude",
+            definitions: { claude: { cmd: "claude", color: "#fff" } },
+          },
+        }),
+        // 2 in progress, cap is 2 → fail (inProgress < cap requires strictly less)
+        countInProgress: vi.fn<TicketDoctorDependencies["countInProgress"]>().mockResolvedValue(2),
+      });
+      const result = await ticketDoctor(dependencies);
+      const check = result.eligibility.find((c) => c.name === "In-progress cap not hit");
+      expect(check?.status).toBe("fail");
+      expect(result.verdict).toMatchObject({
+        kind: "ineligible",
+        reason: "In-progress cap not hit",
+      });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the default model for usage check when the ticket has an agent-any label", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-el-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    try {
+      const fetchUsage = vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({
+        claude: { session: 0.1, sessionEndDuration: null, weekly: null, weekEndDuration: null },
+      });
+      const dependencies = makeFullStub({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 2,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+          workspace: {
+            projectDir,
+            knownRepositories: ["herds-social/herds"],
+          },
+          models: {
+            default: "claude",
+            definitions: { claude: { cmd: "claude", color: "#fff" } },
+          },
+        }),
+        fetchRawIssue: vi.fn<TicketDoctorDependencies["fetchRawIssue"]>().mockResolvedValue({
+          uuid: "uuid-1",
+          title: "X",
+          description: "see herds-social/herds",
+          teamId: "team-1",
+          labels: [{ name: "agent-any" }],
+          stateName: "Todo",
+        }),
+        fetchUsage,
+      });
+      const result = await ticketDoctor(dependencies);
+      // agent-any falls back to default model "claude"; usage check should pass
+      const usageCheck = result.eligibility.find(
+        (c) => c.name === 'Model "claude" usage under sessionLimitPercentage',
+      );
+      expect(usageCheck?.status).toBe("ok");
+      expect(result.verdict.kind).toBe("would-dispatch");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves eligibility empty and skips fetchBlockersFor when resolution failed", async () => {
+    const fetchBlockersFor = vi
+      .fn<TicketDoctorDependencies["fetchBlockersFor"]>()
+      .mockResolvedValue([]);
+    const dependencies = makeStubDependencies({
+      fetchRawIssue: vi
+        .fn<TicketDoctorDependencies["fetchRawIssue"]>()
+        .mockResolvedValue(makeStubRawIssue({ stateName: "Done", labels: [], description: "" })),
+      fetchBlockersFor,
+    });
+    const result = await ticketDoctor(dependencies);
+    expect(result.eligibility).toHaveLength(0);
+    expect(fetchBlockersFor).not.toHaveBeenCalled();
+    expect(result.verdict.kind).toBe("ineligible");
   });
 });

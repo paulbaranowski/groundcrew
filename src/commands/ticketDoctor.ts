@@ -1,7 +1,15 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { resolveModelFor, resolveRepositoryFor, type RawLinearIssue } from "../lib/boardSource.ts";
+import {
+  resolveModelFor,
+  resolveRepositoryFor,
+  type Blocker,
+  type GroundcrewIssue,
+  type RawLinearIssue,
+} from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import type { UsageByModel } from "../lib/usage.ts";
+import { classifyBlockers } from "./eligibility.ts";
 
 export type TicketDoctorVerdict =
   | { kind: "would-dispatch" }
@@ -31,6 +39,200 @@ export interface TicketDoctorDependencies {
    * real `LinearClient`; tests pass a `vi.fn()` returning a fixture.
    */
   fetchRawIssue: (input: { ticket: string }) => Promise<RawLinearIssue>;
+  fetchBlockersFor: (input: { ticket: string; uuid: string }) => Promise<readonly Blocker[]>;
+  fetchUsage: () => Promise<UsageByModel>;
+  countInProgress: () => Promise<number>;
+}
+
+interface ModelResolutionResult {
+  resolvedModel: string;
+  checks: TicketCheck[];
+}
+
+function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelResolutionResult {
+  const modelResolution = resolveModelFor({ labels: raw.labels, config });
+  const checks: TicketCheck[] = [];
+  switch (modelResolution.kind) {
+    case "no-label": {
+      checks.push({
+        name: "Has agent-* label",
+        status: "fail",
+        detail: "no agent-* label on this ticket",
+      });
+      checks.push({ name: "Model resolves from agent-* label", status: "skipped" });
+      break;
+    }
+    case "agent-any": {
+      checks.push({
+        name: "Has agent-* label",
+        status: "ok",
+        detail: "agent-any (model picked at dispatch time)",
+      });
+      checks.push({
+        name: "Model resolves from agent-* label",
+        status: "ok",
+        detail: `would resolve to "${config.models.default}" if no other model has more headroom`,
+      });
+      break;
+    }
+    case "matched": {
+      checks.push({
+        name: "Has agent-* label",
+        status: "ok",
+        detail: `agent-${modelResolution.model}`,
+      });
+      checks.push({
+        name: "Model resolves from agent-* label",
+        status: "ok",
+        detail: `model "${modelResolution.model}"`,
+      });
+      break;
+    }
+    case "disabled-fallback": {
+      checks.push({
+        name: "Has agent-* label",
+        status: "ok",
+        detail: `agent-${modelResolution.requestedModel}`,
+      });
+      checks.push({
+        name: "Model resolves from agent-* label",
+        status: "fail",
+        detail: `requested model "${modelResolution.requestedModel}" is disabled — would fall back to "${modelResolution.fallbackModel}"`,
+      });
+      break;
+    }
+    /* v8 ignore next @preserve */
+    default: {
+      break;
+    }
+  }
+  const resolvedModel =
+    modelResolution.kind === "matched" ? modelResolution.model : config.models.default;
+  return { resolvedModel, checks };
+}
+
+interface RepoResolutionResult {
+  resolvedRepository: string;
+  checks: TicketCheck[];
+}
+
+function buildRepoChecks(
+  raw: RawLinearIssue,
+  config: ResolvedConfig,
+  ticket: string,
+): RepoResolutionResult {
+  const repositoryResolution = resolveRepositoryFor({
+    description: raw.description,
+    config,
+    ticket,
+  });
+  const checks: TicketCheck[] = [];
+  if (repositoryResolution.kind === "ok") {
+    checks.push({
+      name: "Description mentions known repo",
+      status: "ok",
+      detail: repositoryResolution.repository,
+    });
+    const repoDir = join(config.workspace.projectDir, repositoryResolution.repository);
+    if (existsSync(repoDir)) {
+      checks.push({
+        name: "Resolved repo is cloned locally",
+        status: "ok",
+        detail: repoDir,
+      });
+    } else {
+      checks.push({
+        name: "Resolved repo is cloned locally",
+        status: "fail",
+        detail: `${repositoryResolution.repository} not found at ${repoDir} — run \`crew setup repos ${repositoryResolution.repository}\``,
+      });
+    }
+  } else {
+    checks.push({
+      name: "Description mentions known repo",
+      status: "fail",
+      detail: `no entry from workspace.knownRepositories (${config.workspace.knownRepositories.join(", ")}) appears in description`,
+    });
+    checks.push({
+      name: "Resolved repo is cloned locally",
+      status: "skipped",
+    });
+  }
+  // repositoryResolution.kind is "ok" only when the first check passed.
+  /* v8 ignore else @preserve */
+  const resolvedRepository =
+    repositoryResolution.kind === "ok" ? repositoryResolution.repository : "";
+  return { resolvedRepository, checks };
+}
+
+interface EligibilityCheckArguments {
+  ticket: string;
+  raw: RawLinearIssue;
+  config: ResolvedConfig;
+  resolvedRepository: string;
+  resolvedModel: string;
+  dependencies: TicketDoctorDependencies;
+  eligibility: TicketCheck[];
+}
+
+async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Promise<boolean> {
+  const { ticket, raw, config, resolvedRepository, resolvedModel, dependencies, eligibility } =
+    arguments_;
+
+  const blockers = await dependencies.fetchBlockersFor({ ticket, uuid: raw.uuid });
+  const groundcrewIssue: GroundcrewIssue = {
+    id: ticket,
+    uuid: raw.uuid,
+    title: raw.title,
+    status: raw.stateName,
+    statusId: "",
+    assignee: "",
+    updatedAt: "",
+    teamId: raw.teamId,
+    repository: resolvedRepository,
+    model: resolvedModel,
+    blockers: [...blockers],
+    hasMoreBlockers: false,
+  };
+
+  const blockerClassification = classifyBlockers(config, [groundcrewIssue]);
+  const [firstSkip] = blockerClassification.skips;
+  if (firstSkip !== undefined) {
+    // firstSkip.blockers is always set for "blocked" and "blockers_paginated" skip reasons.
+    /* v8 ignore next @preserve */
+    const blockerIds = firstSkip.blockers ?? [];
+    eligibility.push({
+      name: "No active blockers",
+      status: "fail",
+      detail: blockerIds.join(", "),
+    });
+    return false;
+  }
+  eligibility.push({ name: "No active blockers", status: "ok" });
+
+  const usage = await dependencies.fetchUsage();
+  const sessionFraction = usage[resolvedModel]?.session ?? 0;
+  const limitPercentage = config.orchestrator.sessionLimitPercentage;
+  // Mirror the dispatcher rule: exhausted when `session * 100 > sessionLimitPercentage`.
+  // "ok" is the negation: session * 100 <= sessionLimitPercentage.
+  const usageOk = sessionFraction * 100 <= limitPercentage;
+  const sessionPercent = (sessionFraction * 100).toFixed(0);
+  eligibility.push({
+    name: `Model "${resolvedModel}" usage under sessionLimitPercentage`,
+    status: usageOk ? "ok" : "fail",
+    detail: `${sessionPercent}% (limit ${limitPercentage}%)`,
+  });
+
+  const inProgress = await dependencies.countInProgress();
+  const cap = config.orchestrator.maximumInProgress;
+  const capOk = inProgress < cap;
+  eligibility.push({
+    name: "In-progress cap not hit",
+    status: capOk ? "ok" : "fail",
+    detail: `${inProgress}/${cap} used`,
+  });
+
+  return eligibility.every((check) => check.status === "ok");
 }
 
 export async function ticketDoctor(
@@ -59,8 +261,7 @@ export async function ticketDoctor(
 
   // Status check
   const todoState = config.linear.statuses.todo;
-  const statusOk = raw.stateName === todoState;
-  if (statusOk) {
+  if (raw.stateName === todoState) {
     resolution.push({ name: "Status is Todo", status: "ok" });
   } else {
     resolution.push({
@@ -70,115 +271,46 @@ export async function ticketDoctor(
     });
   }
 
-  // Label + model checks — branch on resolveModelFor's discriminator
-  const modelResolution = resolveModelFor({ labels: raw.labels, config });
-  switch (modelResolution.kind) {
-    case "no-label": {
-      resolution.push({
-        name: "Has agent-* label",
-        status: "fail",
-        detail: "no agent-* label on this ticket",
-      });
-      resolution.push({ name: "Model resolves from agent-* label", status: "skipped" });
-      break;
-    }
-    case "agent-any": {
-      resolution.push({
-        name: "Has agent-* label",
-        status: "ok",
-        detail: "agent-any (model picked at dispatch time)",
-      });
-      resolution.push({
-        name: "Model resolves from agent-* label",
-        status: "ok",
-        detail: `would resolve to "${config.models.default}" if no other model has more headroom`,
-      });
-      break;
-    }
-    case "matched": {
-      resolution.push({
-        name: "Has agent-* label",
-        status: "ok",
-        detail: `agent-${modelResolution.model}`,
-      });
-      resolution.push({
-        name: "Model resolves from agent-* label",
-        status: "ok",
-        detail: `model "${modelResolution.model}"`,
-      });
-      break;
-    }
-    case "disabled-fallback": {
-      resolution.push({
-        name: "Has agent-* label",
-        status: "ok",
-        detail: `agent-${modelResolution.requestedModel}`,
-      });
-      resolution.push({
-        name: "Model resolves from agent-* label",
-        status: "fail",
-        detail: `requested model "${modelResolution.requestedModel}" is disabled — would fall back to "${modelResolution.fallbackModel}"`,
-      });
-      break;
-    }
-    /* v8 ignore next @preserve */
-    default: {
-      break;
-    }
-  }
+  // Label + model checks
+  const { resolvedModel, checks: modelChecks } = buildModelChecks(raw, config);
+  resolution.push(...modelChecks);
 
-  // Repo check
-  const repositoryResolution = resolveRepositoryFor({
-    description: raw.description,
-    config,
-    ticket,
-  });
-  if (repositoryResolution.kind === "ok") {
-    resolution.push({
-      name: "Description mentions known repo",
-      status: "ok",
-      detail: repositoryResolution.repository,
-    });
-  } else {
-    resolution.push({
-      name: "Description mentions known repo",
-      status: "fail",
-      detail: `no entry from workspace.knownRepositories (${config.workspace.knownRepositories.join(", ")}) appears in description`,
-    });
-  }
+  // Repo checks
+  const { resolvedRepository, checks: repoChecks } = buildRepoChecks(raw, config, ticket);
+  resolution.push(...repoChecks);
 
-  // Repo cloned-locally check
-  if (repositoryResolution.kind === "ok") {
-    const repoDir = join(config.workspace.projectDir, repositoryResolution.repository);
-    if (existsSync(repoDir)) {
-      resolution.push({
-        name: "Resolved repo is cloned locally",
-        status: "ok",
-        detail: repoDir,
-      });
-    } else {
-      resolution.push({
-        name: "Resolved repo is cloned locally",
-        status: "fail",
-        detail: `${repositoryResolution.repository} not found at ${repoDir} — run \`crew setup repos ${repositoryResolution.repository}\``,
-      });
-    }
-  } else {
-    resolution.push({
-      name: "Resolved repo is cloned locally",
-      status: "skipped",
-    });
-  }
-
-  // Verdict: any resolution fail → ineligible with first-fail name; otherwise placeholder
-  const firstFail = resolution.find((check) => check.status === "fail");
-  if (firstFail !== undefined) {
+  const firstResolutionFail = resolution.find((check) => check.status === "fail");
+  if (firstResolutionFail !== undefined) {
     return {
       ticket,
       title: raw.title,
       resolution,
       eligibility,
-      verdict: { kind: "ineligible", reason: firstFail.name },
+      verdict: { kind: "ineligible", reason: firstResolutionFail.name },
+    };
+  }
+
+  // All resolution checks passed (or were skipped). Run eligibility checks.
+  const allEligibilityOk = await runEligibilityChecks({
+    ticket,
+    raw,
+    config,
+    resolvedRepository,
+    resolvedModel,
+    dependencies,
+    eligibility,
+  });
+  if (!allEligibilityOk) {
+    const firstEligibilityFail = eligibility.find((check) => check.status === "fail");
+    // firstEligibilityFail is always defined when allEligibilityOk is false; fallback is defensive.
+    /* v8 ignore next @preserve */
+    const reason = firstEligibilityFail?.name ?? "eligibility check failed";
+    return {
+      ticket,
+      title: raw.title,
+      resolution,
+      eligibility,
+      verdict: { kind: "ineligible", reason },
     };
   }
   return {
@@ -186,6 +318,6 @@ export async function ticketDoctor(
     title: raw.title,
     resolution,
     eligibility,
-    verdict: { kind: "ineligible", reason: "eligibility checks not implemented yet" },
+    verdict: { kind: "would-dispatch" },
   };
 }
