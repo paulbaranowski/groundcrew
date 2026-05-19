@@ -230,7 +230,30 @@ async function removeWorktree(
       removeArguments.push("--force");
     }
     removeArguments.push(entry.dir);
-    await runCommandAsync("git", removeArguments, longRunningCommandOptions(options.signal));
+    try {
+      await runCommandAsync("git", removeArguments, longRunningCommandOptions(options.signal));
+    } catch (error) {
+      // git's `fatal: ... use --force to delete it` line goes to inherited
+      // stderr, so the captured error is just "Exit status: 128". Probe the
+      // worktree ourselves so the failure message explains the condition
+      // (modified/untracked files) and points at `crew cleanup --force`.
+      if (options.force || options.signal?.aborted === true) {
+        throw error;
+      }
+      const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
+      if (dirtiness.kind !== "dirty") {
+        throw error;
+      }
+      throw new Error(
+        describeDirtyWorktree({
+          ticket: entry.ticket,
+          dir: entry.dir,
+          modified: dirtiness.modified,
+          untracked: dirtiness.untracked,
+        }),
+        { cause: error },
+      );
+    }
   } else {
     log(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
     await runCommandAsync(
@@ -245,6 +268,62 @@ async function removeWorktree(
     branchName: entry.branchName,
     ...signalProperty(options.signal),
   });
+}
+
+type WorktreeDirtiness =
+  | { kind: "dirty"; modified: number; untracked: number }
+  | { kind: "clean" }
+  | { kind: "unknown" };
+
+async function probeWorktreeDirtiness(
+  worktreeDir: string,
+  signal: AbortSignal | undefined,
+): Promise<WorktreeDirtiness> {
+  let output: string;
+  try {
+    output = await runCommandAsync(
+      "git",
+      ["-C", worktreeDir, "status", "--porcelain"],
+      signalProperty(signal),
+    );
+  } catch {
+    return { kind: "unknown" };
+  }
+  let modified = 0;
+  let untracked = 0;
+  for (const line of output.split("\n")) {
+    if (line.length === 0) {
+      continue;
+    }
+    if (line.startsWith("??")) {
+      untracked += 1;
+    } else {
+      modified += 1;
+    }
+  }
+  if (modified === 0 && untracked === 0) {
+    return { kind: "clean" };
+  }
+  return { kind: "dirty", modified, untracked };
+}
+
+function describeDirtyWorktree(arguments_: {
+  ticket: string;
+  dir: string;
+  modified: number;
+  untracked: number;
+}): string {
+  const { ticket, dir, modified, untracked } = arguments_;
+  const parts: string[] = [];
+  if (modified > 0) {
+    parts.push(`${modified} modified file${modified === 1 ? "" : "s"}`);
+  }
+  if (untracked > 0) {
+    parts.push(`${untracked} untracked file${untracked === 1 ? "" : "s"}`);
+  }
+  const summary = parts.join(" and ");
+  const pronoun = modified + untracked === 1 ? "it" : "them";
+  return `worktree has ${summary}. Run \`crew cleanup --force ${ticket}\` to discard ${pronoun}, or commit/stash in ${dir} first.`;
 }
 
 function list(config: ResolvedConfig): WorktreeEntry[] {
