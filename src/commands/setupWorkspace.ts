@@ -126,10 +126,16 @@ export async function setupWorkspace(
   await ensureClearance({ logger: log });
 
   const spec = { repository, ticket };
-  const created =
-    signal === undefined
-      ? await worktrees.create(config, spec)
-      : await worktrees.create(config, spec, signal);
+  let created: WorktreeEntry;
+  try {
+    created =
+      signal === undefined
+        ? await worktrees.create(config, spec)
+        : await worktrees.create(config, spec, signal);
+  } catch (error) {
+    await logAttachHintForExistingWorkspace({ config, ticket, signal });
+    throw error;
+  }
   const { branchName, dir: launchDir } = created;
   const worktreeName = `${repository}-${ticket}`;
 
@@ -178,9 +184,38 @@ export async function setupWorkspace(
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
     log(`  Branch:   ${branchName}`);
+    const attach = await workspaces.attachHint(config, ticket, signal);
+    if (attach !== undefined) {
+      log(`  Attach:   ${attach}`);
+    }
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir });
     throw error;
+  }
+}
+
+/**
+ * Probe the workspace backend and, if a workspace for `ticket` is still
+ * live, log the attach hint. Used on the pre-launch error path (e.g. the
+ * worktree already exists from a prior run) so the user can find the
+ * still-running session instead of being told only that the worktree is
+ * in the way. Silent when the probe is unavailable or the workspace is
+ * gone — we don't want to point at a window that doesn't exist.
+ */
+async function logAttachHintForExistingWorkspace(arguments_: {
+  config: ResolvedConfig;
+  ticket: string;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const { config, ticket, signal } = arguments_;
+  const probe = await workspaces.probe(config, signal);
+  if (probe.kind !== "ok" || !probe.names.has(ticket)) {
+    return;
+  }
+  const attach = await workspaces.attachHint(config, ticket, signal);
+  /* v8 ignore else @preserve -- attachHint is undefined only for cmux, but cmux probe would've returned the workspace too; tmux always emits a hint */
+  if (attach !== undefined) {
+    log(`  Attach:   ${attach}`);
   }
 }
 

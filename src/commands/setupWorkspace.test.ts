@@ -531,6 +531,30 @@ describe(setupWorkspace, () => {
     });
   });
 
+  it("logs the tmux attach command after launch so the user knows how to reach the workspace", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: true,
+      hasCmux: false,
+      hasTmux: true,
+      isMacOS: true,
+      isSafehouseSupported: true,
+    });
+    const config = makeConfig();
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(logMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+  });
+
+  it("omits the Attach line when the backend has no shell attach hint (cmux)", async () => {
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
+  });
+
   it("fails before creating a worktree when local runs are requested off macOS", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
@@ -583,6 +607,57 @@ describe(setupWorkspace, () => {
       "cmux",
       expect.arrayContaining(["new-workspace"]),
     );
+  });
+
+  it("logs the tmux attach command when the worktree already exists and the previous workspace is still live", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: true,
+      hasCmux: false,
+      hasTmux: true,
+      isMacOS: true,
+      isSafehouseSupported: true,
+    });
+    createMock.mockImplementation(() => {
+      throw new Error("Worktree already exists: /work/repo-a-team-1");
+    });
+    // createMock short-circuits before any runCommand call, so the only
+    // runCommand after the throw is tmux list-windows from workspaces.probe.
+    runCommandMock.mockReturnValue("_groundcrew_idle\t0\nteam-1\t0\n");
+
+    await expect(
+      setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      }),
+    ).rejects.toThrow(/Worktree already exists/);
+
+    expect(logMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+  });
+
+  it("does not log an attach hint when the worktree exists but no live workspace remains", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: true,
+      hasCmux: false,
+      hasTmux: true,
+      isMacOS: true,
+      isSafehouseSupported: true,
+    });
+    createMock.mockImplementation(() => {
+      throw new Error("Worktree already exists: /work/repo-a-team-1");
+    });
+    // Probe returns only the idle sentinel — no live ticket window for team-1.
+    runCommandMock.mockReturnValue("_groundcrew_idle\t0\n");
+
+    await expect(
+      setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      }),
+    ).rejects.toThrow(/Worktree already exists/);
+
+    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
   });
 
   it("rejects unknown models", async () => {

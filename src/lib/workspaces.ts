@@ -53,6 +53,11 @@ interface Adapter {
   list(signal?: AbortSignal): Promise<Workspace[] | undefined>;
   /** No-op when no workspace exists for `name`. */
   close(name: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Shell-attach hint for the workspace, or `undefined` when the backend
+   * has no equivalent (e.g. cmux surfaces workspaces in its own UI).
+   */
+  attachHint(name: string): string | undefined;
 }
 
 async function runWorkspaceCommand(
@@ -217,6 +222,12 @@ const cmuxAdapter: Adapter = {
       }
       throw error;
     }
+  },
+  attachHint(_name) {
+    // cmux is a TUI; users surface workspaces by launching the cmux app,
+    // not a shell command. No useful hint to emit.
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that the backend has no hint
+    return undefined;
   },
 };
 
@@ -437,6 +448,9 @@ const tmuxAdapter: Adapter = {
       throw error;
     }
   },
+  attachHint(name) {
+    return `tmux attach -t ${TMUX_SESSION}:${name}`;
+  },
 };
 
 // Per-config cache: production resolves the adapter once at first use
@@ -487,5 +501,13 @@ export const workspaces = {
   async close(config: ResolvedConfig, name: string, signal?: AbortSignal): Promise<void> {
     const adapter = await adapterFor(config, signal);
     await adapter.close(name, signal);
+  },
+  async attachHint(
+    config: ResolvedConfig,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    const adapter = await adapterFor(config, signal);
+    return adapter.attachHint(name);
   },
 };

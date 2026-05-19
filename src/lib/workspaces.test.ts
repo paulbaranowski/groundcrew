@@ -762,6 +762,29 @@ describe("workspaces.close (tmux)", () => {
   });
 });
 
+describe("workspaces.attachHint (cmux)", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(commonAfterEach);
+
+  it("returns undefined (cmux has no shell attach equivalent; workspace surfaces in the cmux UI)", async () => {
+    await expect(workspaces.attachHint(makeConfig(), "TEAM-1")).resolves.toBeUndefined();
+  });
+});
+
+describe("workspaces.attachHint (tmux)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+  });
+  afterEach(commonAfterEach);
+
+  it("returns the tmux attach command targeting the ticket window inside the groundcrew session", async () => {
+    await expect(workspaces.attachHint(makeConfig("tmux"), "TEAM-1")).resolves.toBe(
+      "tmux attach -t groundcrew:TEAM-1",
+    );
+  });
+});
+
 describe(resolveWorkspaceKind, () => {
   beforeEach(commonBeforeEach);
   afterEach(commonAfterEach);
