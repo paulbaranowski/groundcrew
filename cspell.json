@@ -9,7 +9,8 @@
     "out-tsc/**",
     "out-tsc",
     "test-output/**",
-    "test-output"
+    "test-output",
+    "docs/superpowers/**"
   ],
   "words": [
     "assertname",
