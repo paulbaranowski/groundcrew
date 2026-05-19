@@ -24,6 +24,7 @@ export interface TicketCheck {
   name: string;
   status: "ok" | "fail" | "skipped";
   detail?: string;
+  failureSummary?: string;
 }
 
 export interface TicketDoctorResult {
@@ -62,6 +63,7 @@ function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelRes
         name: "Has agent-* label",
         status: "fail",
         detail: "no agent-* label on this ticket",
+        failureSummary: "ticket has no agent-* label",
       });
       checks.push({ name: "Model resolves from agent-* label", status: "skipped" });
       break;
@@ -102,6 +104,7 @@ function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelRes
         name: "Model resolves from agent-* label",
         status: "fail",
         detail: `requested model "${modelResolution.requestedModel}" is disabled — would fall back to "${modelResolution.fallbackModel}"`,
+        failureSummary: `agent-${modelResolution.requestedModel} maps to disabled model`,
       });
       break;
     }
@@ -149,6 +152,7 @@ function buildRepoChecks(
         name: "Resolved repo is cloned locally",
         status: "fail",
         detail: `${repositoryResolution.repository} not found at ${repoDir} — run \`crew setup repos ${repositoryResolution.repository}\``,
+        failureSummary: `resolved repo ${repositoryResolution.repository} is not cloned locally`,
       });
     }
   } else {
@@ -156,6 +160,7 @@ function buildRepoChecks(
       name: "Description mentions known repo",
       status: "fail",
       detail: `no entry from workspace.knownRepositories (${config.workspace.knownRepositories.join(", ")}) appears in description`,
+      failureSummary: "no known repo mentioned in description",
     });
     checks.push({
       name: "Resolved repo is cloned locally",
@@ -209,6 +214,7 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
       name: "No active blockers",
       status: "fail",
       detail: blockerIds.join(", "),
+      failureSummary: `blocked by ${blockerIds.join(", ")}`,
     });
     return false;
   }
@@ -221,20 +227,28 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
   // "ok" is the negation: session * 100 <= sessionLimitPercentage.
   const usageOk = sessionFraction * 100 <= limitPercentage;
   const sessionPercent = (sessionFraction * 100).toFixed(0);
-  eligibility.push({
+  const usageCheck: TicketCheck = {
     name: `Model "${resolvedModel}" usage under sessionLimitPercentage`,
     status: usageOk ? "ok" : "fail",
     detail: `${sessionPercent}% (limit ${limitPercentage}%)`,
-  });
+  };
+  if (!usageOk) {
+    usageCheck.failureSummary = `${resolvedModel} session usage ${sessionPercent}% over ${limitPercentage}% limit`;
+  }
+  eligibility.push(usageCheck);
 
   const inProgress = await dependencies.countInProgress();
   const cap = config.orchestrator.maximumInProgress;
   const capOk = inProgress < cap;
-  eligibility.push({
+  const capCheck: TicketCheck = {
     name: "In-progress cap not hit",
     status: capOk ? "ok" : "fail",
     detail: `${inProgress}/${cap} used`,
-  });
+  };
+  if (!capOk) {
+    capCheck.failureSummary = `in-progress cap hit (${inProgress}/${cap})`;
+  }
+  eligibility.push(capCheck);
 
   return eligibility.every((check) => check.status === "ok");
 }
@@ -319,6 +333,7 @@ export async function ticketDoctor(
       name: "Status is Todo",
       status: "fail",
       detail: `current: ${raw.stateName}`,
+      failureSummary: `status is ${raw.stateName} (need ${todoState})`,
     });
   }
 
@@ -332,12 +347,15 @@ export async function ticketDoctor(
 
   const firstResolutionFail = resolution.find((check) => check.status === "fail");
   if (firstResolutionFail !== undefined) {
+    // failureSummary is always set for all resolution fail paths; .name fallback is defensive.
+    /* v8 ignore next @preserve */
+    const resolutionReason = firstResolutionFail.failureSummary ?? firstResolutionFail.name;
     return {
       ticket,
       title: raw.title,
       resolution,
       eligibility,
-      verdict: { kind: "ineligible", reason: firstResolutionFail.name },
+      verdict: { kind: "ineligible", reason: resolutionReason },
     };
   }
 
@@ -355,7 +373,10 @@ export async function ticketDoctor(
     const firstEligibilityFail = eligibility.find((check) => check.status === "fail");
     // firstEligibilityFail is always defined when allEligibilityOk is false; fallback is defensive.
     /* v8 ignore next @preserve */
-    const reason = firstEligibilityFail?.name ?? "eligibility check failed";
+    const reason =
+      firstEligibilityFail?.failureSummary ??
+      firstEligibilityFail?.name ??
+      "eligibility check failed";
     return {
       ticket,
       title: raw.title,

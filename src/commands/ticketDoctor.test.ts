@@ -458,7 +458,10 @@ describe("ticketDoctor — eligibility phase", () => {
       const result = await ticketDoctor(dependencies);
       const check = result.eligibility.find((c) => c.name === "No active blockers");
       expect(check?.status).toBe("fail");
-      expect(result.verdict).toMatchObject({ kind: "ineligible", reason: "No active blockers" });
+      expect(result.verdict).toMatchObject({
+        kind: "ineligible",
+        reason: "blocked by HRD-2:In Progress",
+      });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -496,7 +499,7 @@ describe("ticketDoctor — eligibility phase", () => {
       expect(check?.status).toBe("fail");
       expect(result.verdict).toMatchObject({
         kind: "ineligible",
-        reason: 'Model "claude" usage under sessionLimitPercentage',
+        reason: "claude session usage 90% over 85% limit",
       });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
@@ -531,7 +534,7 @@ describe("ticketDoctor — eligibility phase", () => {
       expect(check?.status).toBe("fail");
       expect(result.verdict).toMatchObject({
         kind: "ineligible",
-        reason: "In-progress cap not hit",
+        reason: "in-progress cap hit (2/2)",
       });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
@@ -663,7 +666,7 @@ describe("ticket doctor renderer", () => {
         { name: "Resolved repo is cloned locally", status: "skipped" },
       ],
       eligibility: [],
-      verdict: { kind: "ineligible", reason: "Description mentions known repo" },
+      verdict: { kind: "ineligible", reason: "no known repo mentioned in description" },
     };
 
     const lines = renderTicketDoctorResult(result);
@@ -673,9 +676,9 @@ describe("ticket doctor renderer", () => {
     expect(failLine).toMatch(/\[--\]/);
     expect(failLine).toMatch(/no entry/);
 
-    expect(lines.some((l) => l.includes("→ ineligible: Description mentions known repo"))).toBe(
-      true,
-    );
+    expect(
+      lines.some((l) => l.includes("→ ineligible: no known repo mentioned in description")),
+    ).toBe(true);
   });
 
   it("empty eligibility with ineligible verdict: prints resolution-checks-failed skip message", () => {
@@ -687,7 +690,7 @@ describe("ticket doctor renderer", () => {
         { name: "Status is Todo", status: "fail", detail: "current: Done" },
       ],
       eligibility: [],
-      verdict: { kind: "ineligible", reason: "Status is Todo" },
+      verdict: { kind: "ineligible", reason: "status is Done (need Todo)" },
     };
 
     const lines = renderTicketDoctorResult(result);
