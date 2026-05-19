@@ -12,7 +12,7 @@ import {
 } from "../lib/boardSource.ts";
 import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
-import { getLinearClient, writeOutput } from "../lib/util.ts";
+import { getLinearClient, lazyLinearClient, writeOutput } from "../lib/util.ts";
 import {
   classifyBlockers,
   classifyUsageExhaustion,
@@ -466,11 +466,7 @@ export async function ticketDoctorCli(argv: string[]): Promise<void> {
 
 export async function runTicketDoctor(ticket: string): Promise<boolean> {
   const config = await loadConfig();
-  let client: ReturnType<typeof getLinearClient> | undefined;
-  const linearClient = (): ReturnType<typeof getLinearClient> => {
-    client ??= getLinearClient();
-    return client;
-  };
+  const linearClient = lazyLinearClient(getLinearClient);
 
   const result = await ticketDoctor({
     config,

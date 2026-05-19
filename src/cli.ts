@@ -5,7 +5,8 @@ import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
-import { errorMessage, writeError, writeOutput } from "./lib/util.ts";
+import { ticketStatusCli } from "./commands/ticketStatus.ts";
+import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
 
 interface PackageMetadata {
   version: string;
@@ -48,11 +49,7 @@ async function runCli(argv: string[]): Promise<void> {
       continue;
     }
     if (argument === "--ticket") {
-      const value = argv[index + 1];
-      if (value === undefined || value.length === 0 || value.startsWith("-")) {
-        throw new Error("crew run --ticket: ticket id is required");
-      }
-      ticket = value;
+      ticket = readTicketArgument(argv, index, "run");
       index += 1;
       continue;
     }
@@ -76,11 +73,7 @@ async function doctorCli(argv: string[]): Promise<void> {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--ticket") {
-      const value = argv[index + 1];
-      if (value === undefined || value.length === 0 || value.startsWith("-")) {
-        throw new Error("crew doctor --ticket: ticket id is required");
-      }
-      ticket = value;
+      ticket = readTicketArgument(argv, index, "doctor");
       index += 1;
       continue;
     }
@@ -89,6 +82,10 @@ async function doctorCli(argv: string[]): Promise<void> {
 
   const ok = ticket === undefined ? await doctor() : await doctor({ ticket });
   process.exitCode = ok ? process.exitCode : 1;
+}
+
+async function statusCli(argv: string[]): Promise<void> {
+  await ticketStatusCli(argv);
 }
 
 const SUBCOMMANDS: Record<string, Subcommand> = {
@@ -101,6 +98,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Verify prereqs, or diagnose one ticket with --ticket",
     usage: "[--ticket <ticket>]",
     invoke: doctorCli,
+  },
+  status: {
+    summary: "Inspect a ticket's local artifacts and recovery state",
+    usage: "--ticket <ticket> [--no-linear] [--no-fetch]",
+    invoke: statusCli,
   },
   cleanup: {
     summary: "Tear down a worktree",

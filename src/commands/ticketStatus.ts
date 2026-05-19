@@ -1,10 +1,11 @@
 // src/commands/ticketStatus.ts
 
-import type { RawLinearIssue } from "../lib/boardSource.ts";
-import type { ResolvedConfig } from "../lib/config.ts";
-import type { WorkspaceProbe } from "../lib/workspaces.ts";
-import type { WorktreeDirtiness, WorktreeEntry } from "../lib/worktrees.ts";
-import type { TicketCheck } from "./ticketCheck.ts";
+import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/boardSource.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { getLinearClient, lazyLinearClient, readTicketArgument, writeOutput } from "../lib/util.ts";
+import { workspaces, type WorkspaceProbe } from "../lib/workspaces.ts";
+import { worktrees, type WorktreeDirtiness, type WorktreeEntry } from "../lib/worktrees.ts";
+import { renderTicketCheckResult, type Section, type TicketCheck } from "./ticketCheck.ts";
 
 /**
  * Placeholder state name passed to `decideVerdict` when the Linear section is
@@ -589,3 +590,173 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     verdict,
   };
 }
+
+// ───────── CLI surface ─────────
+
+export interface StatusArguments {
+  ticket: string;
+  doLinear: boolean;
+  doFetch: boolean;
+}
+
+export function parseStatusArguments(argv: string[]): StatusArguments {
+  let ticket: string | undefined;
+  let doLinear = true;
+  let doFetch = true;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--ticket") {
+      ticket = readTicketArgument(argv, index, "status");
+      index += 1;
+      continue;
+    }
+    if (argument === "--no-linear") {
+      doLinear = false;
+      continue;
+    }
+    if (argument === "--no-fetch") {
+      doFetch = false;
+      continue;
+    }
+    /* v8 ignore next @preserve -- index < argv.length guarantees argument is defined; nullish guard satisfies the TS string|undefined index type */
+    throw new Error(`crew status: unknown argument: ${argument ?? "<empty>"}`);
+  }
+  if (ticket === undefined) {
+    throw new Error("crew status: --ticket <ticket> is required");
+  }
+  return { ticket, doLinear, doFetch };
+}
+
+function formatVerdict(verdict: StatusVerdict): string {
+  switch (verdict.kind) {
+    case "pr-open": {
+      return `→ pr-open: ${verdict.url} (#${verdict.number})`;
+    }
+    case "pr-merged": {
+      return `→ pr-merged: ${verdict.url} (#${verdict.number})`;
+    }
+    case "in-flight": {
+      return `→ in-flight: ${verdict.reason}`;
+    }
+    case "recoverable": {
+      return `→ recoverable: ${verdict.reason}; ${verdict.nextStep}`;
+    }
+    case "lost": {
+      return `→ lost: ${verdict.reason}`;
+    }
+    /* v8 ignore next 3 @preserve -- exhaustive over StatusVerdict.kind */
+    default: {
+      return `→ ${(verdict satisfies never as StatusVerdict).kind}`;
+    }
+  }
+}
+
+export function renderTicketStatusResult(result: TicketStatusResult): string[] {
+  const sections: Section[] = [
+    {
+      name: "Linear",
+      checks: result.linear,
+      ...(result.skipReasons.linear === "" ? {} : { skipReason: result.skipReasons.linear }),
+    },
+    {
+      name: "Worktree",
+      checks: result.worktree,
+      ...(result.skipReasons.worktree === "" ? {} : { skipReason: result.skipReasons.worktree }),
+    },
+    {
+      name: "Workspace",
+      checks: result.workspace,
+      ...(result.skipReasons.workspace === "" ? {} : { skipReason: result.skipReasons.workspace }),
+    },
+    {
+      name: "Local branch",
+      checks: result.localBranch,
+      ...(result.skipReasons.localBranch === ""
+        ? {}
+        : { skipReason: result.skipReasons.localBranch }),
+    },
+    {
+      name: "Remote branch",
+      checks: result.remoteBranch,
+      ...(result.skipReasons.remoteBranch === ""
+        ? {}
+        : { skipReason: result.skipReasons.remoteBranch }),
+    },
+    {
+      name: "Pull request",
+      checks: result.pullRequest,
+      ...(result.skipReasons.pullRequest === ""
+        ? {}
+        : { skipReason: result.skipReasons.pullRequest }),
+    },
+  ];
+  return renderTicketCheckResult({
+    command: "status",
+    ticket: result.ticket,
+    ...(result.title === undefined ? {} : { title: result.title }),
+    sections,
+    verdict: formatVerdict(result.verdict),
+  });
+}
+
+/* v8 ignore start @preserve -- production wiring; covered indirectly by Task 11 smoke test */
+export async function ticketStatusCli(argv: string[]): Promise<void> {
+  const parsed = parseStatusArguments(argv);
+  const ok = await runTicketStatus(parsed);
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
+export async function runTicketStatus(parsed: StatusArguments): Promise<boolean> {
+  const config = await loadConfig();
+  const linearClient = lazyLinearClient(getLinearClient);
+  const fetchRawIssue = parsed.doLinear
+    ? async ({ ticket }: { ticket: string }) =>
+        await fetchRawLinearIssue({ client: linearClient(), ticket })
+    : undefined;
+
+  const result = await ticketStatus({
+    config,
+    ticket: parsed.ticket,
+    fetchRawIssue,
+    findWorktree: (ticket) => worktrees.findByTicket(config, ticket)[0],
+    probeWorkspaces: async () => await workspaces.probe(config),
+    probeWorkingTree: async ({ worktreeDir }) => await worktrees.probeWorkingTree({ worktreeDir }),
+    probeLocalBranch: probeLocalBranchImpl,
+    probeRemoteBranch: probeRemoteBranchImpl,
+    probePullRequest: probePullRequestImpl,
+    doFetch: parsed.doFetch,
+  });
+
+  for (const line of renderTicketStatusResult(result)) {
+    writeOutput(line);
+  }
+  return result.verdict.kind === "pr-open" || result.verdict.kind === "pr-merged";
+}
+
+// ───── production probes (stubbed; Task 10 fills these in) ─────
+
+async function probeLocalBranchImpl(_input: {
+  repoDir: string;
+  branch: string;
+  defaultBranch: string;
+}): Promise<LocalBranchProbe> {
+  return { kind: "unknown", reason: "production probe not yet implemented" };
+}
+
+async function probeRemoteBranchImpl(_input: {
+  repoDir: string;
+  branch: string;
+  doFetch: boolean;
+}): Promise<RemoteBranchProbe> {
+  return { kind: "unknown", reason: "production probe not yet implemented" };
+}
+
+async function probePullRequestImpl(_input: {
+  repoDir: string;
+  branch: string;
+}): Promise<PullRequestProbe> {
+  return { kind: "unknown", reason: "production probe not yet implemented" };
+}
+/* v8 ignore stop @preserve */

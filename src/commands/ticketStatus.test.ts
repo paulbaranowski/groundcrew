@@ -2,6 +2,8 @@ import type { RawLinearIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import {
   decideVerdict,
+  parseStatusArguments,
+  renderTicketStatusResult,
   ticketStatus,
   type DecideVerdictInput,
   type LinearStatusProbe,
@@ -803,5 +805,151 @@ describe("ticketStatus — Pull request section", () => {
 
     expect(actual.pullRequest).toStrictEqual([]);
     expect(actual.skipReasons.pullRequest).toBe("repo dir unresolved");
+  });
+});
+
+describe("parseStatusArguments — CLI arg parsing", () => {
+  it("returns the ticket and default flags", () => {
+    const actual = parseStatusArguments(["--ticket", "HRD-442"]);
+
+    expect(actual).toStrictEqual({
+      ticket: "HRD-442",
+      doLinear: true,
+      doFetch: true,
+    });
+  });
+
+  it("accepts --no-linear and --no-fetch", () => {
+    const actual = parseStatusArguments(["--ticket", "HRD-442", "--no-linear", "--no-fetch"]);
+
+    expect(actual).toStrictEqual({
+      ticket: "HRD-442",
+      doLinear: false,
+      doFetch: false,
+    });
+  });
+
+  it("throws when --ticket is missing", () => {
+    expect(() => parseStatusArguments([])).toThrow(/--ticket/);
+  });
+
+  it("throws when --ticket has no value", () => {
+    expect(() => parseStatusArguments(["--ticket"])).toThrow(/--ticket/);
+  });
+
+  it("throws on unknown flags", () => {
+    expect(() => parseStatusArguments(["--ticket", "HRD-1", "--bogus"])).toThrow(/--bogus/);
+  });
+});
+
+function makeStatusResult(overrides: Partial<TicketStatusResult> = {}): TicketStatusResult {
+  return {
+    ticket: "HRD-1",
+    linear: [{ name: "Ticket exists in Linear", status: "ok", detail: '"Sample"' }],
+    worktree: [{ name: "Host worktree exists", status: "ok" }],
+    workspace: [{ name: "Workspace pane open", status: "ok" }],
+    localBranch: [{ name: "Local branch exists", status: "ok" }],
+    remoteBranch: [{ name: "Branch present on origin", status: "ok" }],
+    pullRequest: [{ name: "Open PR for this branch", status: "ok" }],
+    skipReasons: {
+      linear: "",
+      worktree: "",
+      workspace: "",
+      localBranch: "",
+      remoteBranch: "",
+      pullRequest: "",
+    },
+    verdict: { kind: "lost", reason: "nothing here" },
+    ...overrides,
+  };
+}
+
+describe("renderTicketStatusResult — verdict + section formatting", () => {
+  it("formats pr-open verdicts with url and PR number", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        verdict: { kind: "pr-open", number: 42, url: "https://github.com/x/y/pull/42" },
+      }),
+    );
+
+    expect(actual.at(-1)).toBe("→ pr-open: https://github.com/x/y/pull/42 (#42)");
+  });
+
+  it("formats pr-merged verdicts with url and PR number", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        verdict: { kind: "pr-merged", number: 99, url: "https://github.com/x/y/pull/99" },
+      }),
+    );
+
+    expect(actual.at(-1)).toBe("→ pr-merged: https://github.com/x/y/pull/99 (#99)");
+  });
+
+  it("formats in-flight verdicts with the reason", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        verdict: { kind: "in-flight", reason: 'mid-flight in workspace "hrd-1"' },
+      }),
+    );
+
+    expect(actual.at(-1)).toBe('→ in-flight: mid-flight in workspace "hrd-1"');
+  });
+
+  it("formats recoverable verdicts with reason and next step", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        verdict: { kind: "recoverable", reason: "dirty worktree", nextStep: "commit first" },
+      }),
+    );
+
+    expect(actual.at(-1)).toBe("→ recoverable: dirty worktree; commit first");
+  });
+
+  it("formats lost verdicts with the reason", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        verdict: { kind: "lost", reason: "no trace anywhere" },
+      }),
+    );
+
+    expect(actual.at(-1)).toBe("→ lost: no trace anywhere");
+  });
+
+  it("renders a title in the header when present", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        title: "Add status command",
+      }),
+    );
+
+    const [header] = actual;
+    expect(header).toBe("groundcrew status --ticket HRD-1 (Add status command)");
+  });
+
+  it("renders skip reasons for each section when set", () => {
+    const actual = renderTicketStatusResult(
+      makeStatusResult({
+        linear: [],
+        worktree: [],
+        workspace: [],
+        localBranch: [],
+        remoteBranch: [],
+        pullRequest: [],
+        skipReasons: {
+          linear: "--no-linear",
+          worktree: "no worktree",
+          workspace: "workspace probe unavailable",
+          localBranch: "repo dir unresolved",
+          remoteBranch: "repo dir unresolved",
+          pullRequest: "repo dir unresolved",
+        },
+      }),
+    );
+
+    const output = actual.join("\n");
+    expect(output).toContain("(skipped — --no-linear)");
+    expect(output).toContain("(skipped — no worktree)");
+    expect(output).toContain("(skipped — workspace probe unavailable)");
+    expect(output).toContain("(skipped — repo dir unresolved)");
   });
 });
