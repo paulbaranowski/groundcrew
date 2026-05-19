@@ -222,12 +222,12 @@ Resolution
 Eligibility
   (skipped — resolution checks failed)
 
-→ ineligible: Status is Todo
+→ ineligible: status is In Progress (need Todo)
 ```
 
 ## Gotchas
 
-- **Ticket labelled but not on the board?** Run `crew doctor --ticket <ticket>` — it lists every check the dispatcher runs and flags the failing one.
+- **Ticket labeled but not on the board?** Run `crew doctor --ticket <ticket>` — it lists every check the dispatcher runs and flags the failing one.
 - **Local execution picks one of safehouse/sdx/none.** `local.runner: "auto"` resolves to `safehouse` on macOS and `sdx` (Docker Sandboxes) on Linux/WSL. Override with `local.runner: "safehouse" | "sdx" | "none"`. There is no per-model `isolation` knob anymore — the runner is global. `sdx` requires a per-model `sandbox: { agent }` block so groundcrew can map the model to an sbx agent.
 - **Safehouse-already-wrapped commands are not re-wrapped.** If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew assumes that command owns its Safehouse flags and does not add the `safehouse-clearance` wrapper a second time. Changing the proxy's allowlist after it's running requires killing the PID in `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.pid` so the next launch picks up the new env.
 - **Sandbox lifecycle is create-only.** Groundcrew auto-creates the sandbox for a `<repository, model>` pair when missing, but never deletes one — sandboxes persist across tickets and across `crew cleanup`. Auth state lives inside the sandbox, so deleting it forces a re-login. Inspect or remove them manually with `sbx ls` / `sbx rm`.

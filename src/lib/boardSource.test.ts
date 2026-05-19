@@ -981,6 +981,7 @@ describe(fetchBlockersForTicket, () => {
                 },
               },
             ],
+            pageInfo: { hasNextPage: false, endCursor: "" },
           },
         },
       },
@@ -995,6 +996,65 @@ describe(fetchBlockersForTicket, () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]).toStrictEqual({ id: "hrd-10", title: "Blocker A", status: "In Progress" });
+  });
+
+  it("returns blockers from every relation page", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            inverseRelations: {
+              nodes: [
+                {
+                  type: "blocks",
+                  issue: {
+                    identifier: "HRD-10",
+                    title: "Blocker A",
+                    state: { name: "In Progress" },
+                  },
+                },
+              ],
+              pageInfo: { hasNextPage: true, endCursor: "blockers-cursor-1" },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            inverseRelations: {
+              nodes: [
+                {
+                  type: "blocks",
+                  issue: { identifier: "HRD-20", title: "Blocker B", state: { name: "Todo" } },
+                },
+              ],
+              pageInfo: { hasNextPage: false, endCursor: "" },
+            },
+          },
+        },
+      });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-1",
+      uuid: "uuid-1",
+    });
+
+    expect(result).toStrictEqual([
+      { id: "hrd-10", title: "Blocker A", status: "In Progress" },
+      { id: "hrd-20", title: "Blocker B", status: "Todo" },
+    ]);
+    expect(client.client.rawRequest).toHaveBeenNthCalledWith(1, expect.any(String), {
+      after: null,
+      id: "uuid-1",
+    });
+    expect(client.client.rawRequest).toHaveBeenNthCalledWith(2, expect.any(String), {
+      after: "blockers-cursor-1",
+      id: "uuid-1",
+    });
   });
 
   it("returns an empty array when the issue is null", async () => {
@@ -1018,7 +1078,7 @@ describe(fetchBlockersForTicket, () => {
     client.client.rawRequest.mockResolvedValueOnce({
       data: {
         issue: {
-          inverseRelations: { nodes: [] },
+          inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: "" } },
         },
       },
     });
@@ -1045,6 +1105,7 @@ describe(fetchBlockersForTicket, () => {
                 issue: { identifier: "HRD-20", title: "No state", state: null },
               },
             ],
+            pageInfo: { hasNextPage: false, endCursor: "" },
           },
         },
       },

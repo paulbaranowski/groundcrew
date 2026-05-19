@@ -306,6 +306,7 @@ interface ResolvedIssue {
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
+const ISSUE_RELATION_PAGE_SIZE = 50;
 
 export interface RawLinearIssue {
   uuid: string;
@@ -325,35 +326,50 @@ export async function fetchBlockersForTicket(arguments_: {
   uuid: string;
 }): Promise<readonly Blocker[]> {
   const { client, uuid } = arguments_;
-  const response: { data?: unknown } = await client.client.rawRequest(
-    `query IssueBlockers($id: String!) {
-      issue(id: $id) {
-        inverseRelations(first: 50, includeArchived: false) {
-          nodes {
-            type
-            issue {
-              identifier
-              title
-              state { name }
+  const relations: IssueRelationNode[] = [];
+  let after: string | null = null;
+
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
+    const response: { data?: unknown } = await client.client.rawRequest(
+      `query IssueBlockers($id: String!, $after: String) {
+        issue(id: $id) {
+          inverseRelations(first: ${ISSUE_RELATION_PAGE_SIZE}, after: $after, includeArchived: false) {
+            nodes {
+              type
+              issue {
+                identifier
+                title
+                state { name }
+              }
             }
+            pageInfo { hasNextPage endCursor }
           }
         }
-      }
-    }`,
-    { id: uuid },
-  );
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
-  const { issue } = response.data as {
-    issue: {
-      inverseRelations: {
-        nodes: IssueRelationNode[];
-      };
-    } | null;
-  };
-  if (issue === null) {
-    return [];
+      }`,
+      { id: uuid, after },
+    );
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+    const { issue } = response.data as {
+      issue: {
+        inverseRelations: {
+          nodes: IssueRelationNode[];
+          pageInfo: { hasNextPage: boolean; endCursor: string };
+        };
+      } | null;
+    };
+    if (issue === null) {
+      return [];
+    }
+
+    relations.push(...issue.inverseRelations.nodes);
+    if (!issue.inverseRelations.pageInfo.hasNextPage) {
+      break;
+    }
+    after = issue.inverseRelations.pageInfo.endCursor;
   }
-  return blockersFromRelations(issue.inverseRelations.nodes);
+
+  return blockersFromRelations(relations);
 }
 
 export async function fetchRawLinearIssue(arguments_: {

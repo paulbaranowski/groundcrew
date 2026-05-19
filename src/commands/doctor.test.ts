@@ -83,11 +83,11 @@ interface RawIssueStub {
         state?: { name: string } | null;
       } | null;
     }[];
-    pageInfo: { hasNextPage: boolean };
+    pageInfo: { hasNextPage: boolean; endCursor: string };
   };
 }
 
-type LinearRawRequest = (query: string) => Promise<unknown>;
+type LinearRawRequest = (query: string, variables?: Record<string, unknown>) => Promise<unknown>;
 
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
@@ -181,7 +181,7 @@ function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
     team: { id: "team-default" },
     state: { name: "Todo" },
     labels: { nodes: [{ name: "agent-claude" }] },
-    inverseRelations: { nodes: [], pageInfo: { hasNextPage: false } },
+    inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: "" } },
     ...overrides,
   };
 }
@@ -198,14 +198,29 @@ function makeLinearClient(
 ): LinearClient {
   const { issue = rawIssue(), activePages = [0] } = options;
   let activePageIndex = 0;
+  let blockerPageIndex = 0;
   const rawRequest = vi.fn<LinearRawRequest>(async (query) => {
     if (query.includes("ResolveIssue")) {
       return { data: { issue } };
     }
     if (query.includes("IssueBlockers")) {
+      if (issue === null) {
+        return { data: { issue: null } };
+      }
+      const isFirstPage = blockerPageIndex === 0;
+      blockerPageIndex += 1;
+      const hasNextPage = isFirstPage && issue.inverseRelations.pageInfo.hasNextPage;
       return {
         data: {
-          issue: issue === null ? null : { inverseRelations: issue.inverseRelations },
+          issue: {
+            inverseRelations: {
+              nodes: isFirstPage ? issue.inverseRelations.nodes : [],
+              pageInfo: {
+                hasNextPage,
+                endCursor: hasNextPage ? issue.inverseRelations.pageInfo.endCursor : "",
+              },
+            },
+          },
         },
       };
     }
@@ -359,7 +374,7 @@ describe(doctor, () => {
                 },
               },
             ],
-            pageInfo: { hasNextPage: false },
+            pageInfo: { hasNextPage: false, endCursor: "" },
           },
         }),
       }),
@@ -387,7 +402,7 @@ describe(doctor, () => {
                 },
               },
             ],
-            pageInfo: { hasNextPage: false },
+            pageInfo: { hasNextPage: false, endCursor: "" },
           },
         }),
       }),
@@ -406,7 +421,7 @@ describe(doctor, () => {
         issue: rawIssue({
           inverseRelations: {
             nodes: [],
-            pageInfo: { hasNextPage: true },
+            pageInfo: { hasNextPage: true, endCursor: "blockers-cursor-1" },
           },
         }),
       }),
