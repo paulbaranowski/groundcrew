@@ -160,6 +160,29 @@ Rules:
 - It cannot be combined with `cmd`, `color`, or `usage` in the same entry — disable a model or override its fields, not both.
 - `models.default` must point at an enabled model.
 
+## Per-repo setup hook
+
+When groundcrew launches a worktree it looks for `.groundcrew/setup.sh` in the repo root. If present, it's invoked with `--deps-only` before the agent starts — executable preferred, otherwise via `bash .groundcrew/setup.sh --deps-only`. The same lookup runs inside the sdx sandbox (overridable per-model via `models.definitions.<name>.sandbox.setupCommand`).
+
+If no `.groundcrew/setup.sh` exists, groundcrew falls back to the legacy `.claude/setup.sh` at the same path with the same `--deps-only` contract — so repos that haven't migrated keep working. When neither file exists, groundcrew logs `[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)` (or `sandbox setup: …` for the sdx path) to stderr and continues — no implicit `npm install`, `uv sync`, or anything else.
+
+The `--deps-only` flag is groundcrew's contract with the script: when set, the script should install just the dependencies needed for the agent to run, and skip any interactive bootstrap. Same script handles both modes — branch on `$1`.
+
+Example `.groundcrew/setup.sh` for a Python repo using uv:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "--deps-only" ]; then
+  uv sync --dev
+else
+  uv sync --dev
+  # ... any extra interactive bootstrap ...
+fi
+```
+
+Setup failures are advisory — groundcrew logs the non-zero exit and still launches the agent so a flaky network or stale lockfile doesn't block the session.
+
 ## Manual commands
 
 ```bash

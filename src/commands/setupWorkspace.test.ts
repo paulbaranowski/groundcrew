@@ -449,7 +449,18 @@ describe(setupWorkspace, () => {
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
     expect(launchScript).toContain("cd '/work/repo-a-team-1'");
+    expect(launchScript).toContain("./.groundcrew/setup.sh --deps-only");
+    expect(launchScript).toContain("bash .groundcrew/setup.sh --deps-only");
+    // Backwards compat: legacy .claude/setup.sh stays as a silent fallback after
+    // the new .groundcrew/setup.sh checks, so existing repos keep working.
     expect(launchScript).toContain("./.claude/setup.sh --deps-only");
+    expect(launchScript.indexOf(".groundcrew/setup.sh")).toBeLessThan(
+      launchScript.indexOf(".claude/setup.sh"),
+    );
+    expect(launchScript).toContain(
+      "[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)",
+    );
+    expect(launchScript).not.toContain("npm clean-install");
     expect(launchScript).toContain("exec '/");
     expect(launchScript).toContain(
       "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' claude",

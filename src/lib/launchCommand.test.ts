@@ -177,6 +177,20 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain("echo custom-setup");
     });
 
+    it("falls back to .groundcrew/setup.sh with a no-op hint when no sandbox setupCommand override is set", () => {
+      const out = buildLaunchCommand(sdxArguments());
+
+      expect(out).toContain("./.groundcrew/setup.sh --deps-only");
+      expect(out).toContain("bash .groundcrew/setup.sh --deps-only");
+      // Backwards compat: legacy .claude/setup.sh is checked after .groundcrew/.
+      expect(out).toContain("./.claude/setup.sh --deps-only");
+      expect(out.indexOf(".groundcrew/setup.sh")).toBeLessThan(out.indexOf(".claude/setup.sh"));
+      expect(out).toContain(
+        "[groundcrew] sandbox setup: not configured (add .groundcrew/setup.sh to opt in)",
+      );
+      expect(out).not.toContain("npm clean-install");
+    });
+
     it("substitutes {{sandbox}} in the agent command with the sandbox name", () => {
       const out = buildLaunchCommand(
         sdxArguments({
