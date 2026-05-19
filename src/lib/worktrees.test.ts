@@ -972,4 +972,38 @@ describe("worktrees.probeWorkingTree", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("returns kind: 'unknown' when the directory is not a git repo", async () => {
+    // Hits the catch branch in probeWorktreeDirtiness: `git status` against
+    // a missing directory exits non-zero, runCommandAsync rejects, the catch
+    // swallows it, and the wrapper surfaces the third union member.
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    rmSync(tempDir, { recursive: true, force: true });
+
+    const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+
+    expect(probe.kind).toBe("unknown");
+  });
+
+  it("returns kind: 'unknown' when the signal is already aborted", async () => {
+    // Pins down signal forwarding through probeWorkingTree:
+    // runCommandAsync throws synchronously when options.signal.aborted is true,
+    // so dropping `input.signal` from the wrapper would yield "clean" here
+    // instead of "unknown" and fail this assertion.
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      const controller = new AbortController();
+      controller.abort();
+
+      const probe = await worktrees.probeWorkingTree({
+        worktreeDir: tempDir,
+        signal: controller.signal,
+      });
+
+      expect(probe.kind).toBe("unknown");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
