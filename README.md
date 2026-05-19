@@ -156,12 +156,66 @@ Rules:
 crew run --ticket <TICKET>
 crew setup repos [--dry-run] [<repo>...]
 crew cleanup <TICKET>
+crew ticket doctor <TICKET>
 ```
 
 `crew run --ticket <TICKET>` provisions a single ticket the same way the orchestrator would: the repo is parsed from the ticket's Linear description and the model comes from the ticket's `agent-*` label (manual setup falls back to `models.default` for unlabeled tickets). If the description does not mention a repo from `workspace.knownRepositories`, setup fails before provisioning. `--watch` and `--ticket` are mutually exclusive — `--watch` drives the orchestrator loop; `--ticket` provisions one ticket and exits. `crew cleanup <TICKET>` resolves to every tracked worktree carrying that ticket id (across repos) and tears them all down. To inspect codexbar session windows directly, run `codexbar usage`; the orchestrator already gates on this internally via `orchestrator.sessionLimitPercentage`.
 
+### `crew ticket doctor <ticket>`
+
+Diagnose why a ticket would or wouldn't be dispatched on the next orchestrator tick. Runs the same resolution and eligibility chain as the dispatcher, but for a single ticket, and prints a tree of pass/fail checks.
+
+```bash
+crew ticket doctor HRD-446
+```
+
+Exits 0 if the ticket would dispatch, 1 otherwise. Useful when you've labelled a ticket with `agent-claude` and it doesn't show up on the board.
+
+Example output for a ticket that would dispatch:
+
+```text
+groundcrew ticket doctor — HRD-446 (Add retry logic to the sync job)
+──────────────────────────────────────────────────────────────────────
+
+Resolution
+  [ok] Ticket exists in Linear ("Add retry logic to the sync job")
+  [ok] Status is Todo
+  [ok] Has agent-* label (agent-claude)
+  [ok] Model resolves from agent-* label (model "claude")
+  [ok] Description mentions known repo (owner/repo)
+  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+
+Eligibility
+  [ok] No active blockers
+  [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
+  [ok] In-progress cap not hit (2/4 used)
+
+→ would be dispatched on next tick
+```
+
+Example output for a ticket that's not in the Todo status:
+
+```text
+groundcrew ticket doctor — HRD-447 (Refactor auth middleware)
+─────────────────────────────────────────────────────────────
+
+Resolution
+  [ok] Ticket exists in Linear ("Refactor auth middleware")
+  [--] Status is Todo (current: In Progress)
+  [--] Has agent-* label
+  [--] Model resolves from agent-* label
+  [--] Description mentions known repo
+  [--] Resolved repo is cloned locally
+
+Eligibility
+  (skipped — resolution checks failed)
+
+→ ineligible: Status is Todo
+```
+
 ## Gotchas
 
+- **Ticket labelled but not on the board?** Run `crew ticket doctor <ticket>` — it lists every check the dispatcher runs and flags the failing one.
 - **Execution is macOS plus Safehouse only.** There is no `models.isolation` strategy and no direct local execution mode. Linux/WSL is not supported.
 - **Safehouse-already-wrapped commands are not re-wrapped.** If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew assumes that command owns its Safehouse flags and does not add the `safehouse-clearance` wrapper a second time. Changing the proxy's allowlist after it's running requires killing the PID in `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.pid` so the next launch picks up the new env.
 - **Legacy Docker Sandboxes state is unmanaged.** Groundcrew no longer discovers or cleans `.sbx` worktrees or persistent Docker Sandboxes containers. If you have old state, inspect and remove it manually with `sbx`.
