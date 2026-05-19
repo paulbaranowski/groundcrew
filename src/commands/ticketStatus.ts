@@ -61,18 +61,16 @@ function verdictFromPullRequest(pullRequest: PullRequestProbe): StatusVerdict | 
   return undefined;
 }
 
-function isWorktreePresent(worktree: WorktreeProbe): boolean {
-  /* v8 ignore next 3 @preserve -- short-circuit branches for the "present-*" variants are exercised cumulatively across rows 5-7; this helper centralizes the predicate */
-  return (
-    worktree.kind === "present-clean" ||
-    worktree.kind === "present-dirty" ||
-    worktree.kind === "present-unknown-dirtiness"
-  );
-}
-
 function verdictInFlight(input: DecideVerdictInput): StatusVerdict | undefined {
   // Row 7: Non-terminal Linear status + live worktree → mid-flight session.
-  if (input.linear.kind !== "non-terminal" || !isWorktreePresent(input.worktree)) {
+  if (input.linear.kind !== "non-terminal") {
+    return undefined;
+  }
+  if (
+    input.worktree.kind !== "present-clean" &&
+    input.worktree.kind !== "present-dirty" &&
+    input.worktree.kind !== "present-unknown-dirtiness"
+  ) {
     return undefined;
   }
   /* v8 ignore next 3 @preserve -- caller passes either workspaceName or worktreeDir; defensive guards for the rare both-missing path */

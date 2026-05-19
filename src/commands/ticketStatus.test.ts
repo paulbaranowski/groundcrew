@@ -122,6 +122,47 @@ describe("decideVerdict pure verdict logic", () => {
     expect(actual.reason).toMatch(/hrd-1/);
   });
 
+  it("row 7 — non-terminal + dirty worktree → in-flight (dirty disjunct)", () => {
+    const actual = decideVerdict(
+      makeInput({
+        linear: { kind: "non-terminal", stateName: "In Progress" },
+        worktree: { kind: "present-dirty", modified: 1, untracked: 0 },
+        localBranch: { kind: "present", ahead: 0, behind: 0 },
+        workspaceName: "hrd-1",
+      }),
+    );
+
+    assertInFlight(actual);
+    expect(actual.reason).toMatch(/hrd-1/);
+  });
+
+  it("row 7 — non-terminal + unknown-dirtiness worktree → in-flight (unknown disjunct)", () => {
+    const actual = decideVerdict(
+      makeInput({
+        linear: { kind: "non-terminal", stateName: "In Progress" },
+        worktree: { kind: "present-unknown-dirtiness", reason: "git status failed" },
+        localBranch: { kind: "present", ahead: 0, behind: 0 },
+        workspaceName: "hrd-1",
+      }),
+    );
+
+    assertInFlight(actual);
+    expect(actual.reason).toMatch(/hrd-1/);
+  });
+
+  it("row 7 fallthrough — non-terminal + absent worktree → falls through to stranded local", () => {
+    const actual = decideVerdict(
+      makeInput({
+        linear: { kind: "non-terminal", stateName: "In Progress" },
+        worktree: { kind: "absent" },
+        localBranch: { kind: "present", ahead: 0, behind: 0 },
+      }),
+    );
+
+    assertRecoverable(actual);
+    expect(actual.reason).toMatch(/stranded local branch/);
+  });
+
   it("row 8 — absent worktree but local branch exists → recoverable (stranded branch)", () => {
     const actual = decideVerdict(
       makeInput({
