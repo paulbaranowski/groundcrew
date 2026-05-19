@@ -239,10 +239,10 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
   const issues: Issue[] = nodes
     .filter((node) => node.children.nodes.length === 0)
     .map((node) => {
-      const parsedAgentLabels = parseAgentLabels(node.labels.nodes, config);
-      warnIfDisabledFallback(node.identifier, parsedAgentLabels, config);
+      const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
+      warnIfDisabledFallback(node.identifier, modelResolution, config);
       const repository =
-        parsedAgentLabels === undefined
+        modelResolution.kind === "no-label"
           ? undefined
           : parseRepository({
               description: node.description ?? undefined,
@@ -250,6 +250,14 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
               repositoryRegex,
               ticket: node.identifier,
             });
+      let model: string | undefined;
+      if (modelResolution.kind === "matched") {
+        ({ model } = modelResolution);
+      } else if (modelResolution.kind === "disabled-fallback") {
+        model = modelResolution.fallbackModel;
+      } else if (modelResolution.kind === "agent-any") {
+        model = AGENT_ANY_MODEL;
+      }
       return {
         id: node.identifier.toLowerCase(),
         uuid: node.id,
@@ -259,7 +267,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
         assignee: node.assignee?.name ?? "Unassigned",
         updatedAt: node.updatedAt,
         repository,
-        model: parsedAgentLabels?.model,
+        model,
         teamId: node.team?.id ?? "",
         blockers: blockersFromRelations(node.inverseRelations?.nodes ?? []),
         hasMoreBlockers: node.inverseRelations?.pageInfo.hasNextPage ?? false,
@@ -295,17 +303,21 @@ interface ResolvedIssue {
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
 
-/**
- * `agent-any` collapses to `models.default` here — manual setup doesn't run
- * the usage-gated `any` resolver, so the caller gets a concrete model name
- * instead of a sentinel that downstream code can't interpret.
- */
-export async function fetchResolvedIssue(arguments_: {
+export interface RawLinearIssue {
+  uuid: string;
+  title: string;
+  description: string;
+  teamId: string;
+  labels: { name: string }[];
+  /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
+  stateName: string;
+}
+
+export async function fetchRawLinearIssue(arguments_: {
   client: LinearClient;
-  config: ResolvedConfig;
   ticket: string;
-}): Promise<ResolvedIssue> {
-  const { client, config, ticket } = arguments_;
+}): Promise<RawLinearIssue> {
+  const { client, ticket } = arguments_;
   const response: { data?: unknown } = await client.client.rawRequest(
     `query ResolveIssue($id: String!) {
       issue(id: $id) {
@@ -313,6 +325,7 @@ export async function fetchResolvedIssue(arguments_: {
         title
         description
         team { id }
+        state { name }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
         }
@@ -327,33 +340,110 @@ export async function fetchResolvedIssue(arguments_: {
       title: string;
       description?: string | null;
       team?: { id: string } | null;
+      state?: { name: string } | null;
       labels: { nodes: { name: string }[] };
     } | null;
   };
   if (issue === null) {
     throw new Error(`Ticket ${ticket.toUpperCase()} not found in Linear`);
   }
-  const description = issue.description ?? "";
-  const repository = parseRepository({
-    description,
-    config,
-    repositoryRegex: buildRepositoryRegex(config),
-    ticket: ticket.toUpperCase(),
-  });
-  // Manual setup is an explicit per-ticket opt-in by the user, so an
-  // unlabeled ticket still resolves to `models.default` — different from
-  // the auto-pickup path, where unlabeled tickets are ignored.
-  const parsed = parseAgentLabels(issue.labels.nodes, config);
-  warnIfDisabledFallback(ticket, parsed, config);
-  const model =
-    parsed === undefined || parsed.model === AGENT_ANY_MODEL ? config.models.default : parsed.model;
   return {
     uuid: issue.id,
     title: issue.title,
-    description,
-    repository,
-    model,
+    description: issue.description ?? "",
     teamId: issue.team?.id ?? "",
+    labels: issue.labels.nodes,
+    stateName: issue.state?.name ?? "",
+  };
+}
+
+export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };
+
+export function resolveRepositoryFor(arguments_: {
+  description: string | undefined;
+  config: ResolvedConfig;
+  ticket: string;
+}): RepositoryResolution {
+  const { description, config } = arguments_;
+  if (description === undefined || description.length === 0) {
+    return { kind: "missing" };
+  }
+  const repository = buildRepositoryRegex(config).exec(description)?.[1];
+  if (repository === undefined) {
+    return { kind: "missing" };
+  }
+  return { kind: "ok", repository };
+}
+
+export type ModelResolution =
+  | { kind: "matched"; model: string }
+  | { kind: "no-label" }
+  | { kind: "agent-any" }
+  | { kind: "disabled-fallback"; requestedModel: string; fallbackModel: string };
+
+export function resolveModelFor(arguments_: {
+  labels: { name: string }[];
+  config: ResolvedConfig;
+}): ModelResolution {
+  const { labels, config } = arguments_;
+  const parsed = parseAgentLabels(labels, config);
+  if (parsed === undefined) {
+    return { kind: "no-label" };
+  }
+  if (parsed.model === AGENT_ANY_MODEL) {
+    return { kind: "agent-any" };
+  }
+  if (parsed.disabledFallback !== undefined) {
+    return {
+      kind: "disabled-fallback",
+      requestedModel: parsed.disabledFallback,
+      fallbackModel: parsed.model,
+    };
+  }
+  return { kind: "matched", model: parsed.model };
+}
+
+/**
+ * `agent-any` collapses to `models.default` here — manual setup doesn't run
+ * the usage-gated `any` resolver, so the caller gets a concrete model name
+ * instead of a sentinel that downstream code can't interpret.
+ */
+export async function fetchResolvedIssue(arguments_: {
+  client: LinearClient;
+  config: ResolvedConfig;
+  ticket: string;
+}): Promise<ResolvedIssue> {
+  const { client, config, ticket } = arguments_;
+  const raw = await fetchRawLinearIssue({ client, ticket });
+  const repositoryResolution = resolveRepositoryFor({
+    description: raw.description,
+    config,
+    ticket: ticket.toUpperCase(),
+  });
+  if (repositoryResolution.kind === "missing") {
+    throw new RepositoryResolutionError({
+      ticket: ticket.toUpperCase(),
+      repositories: config.workspace.knownRepositories,
+    });
+  }
+  // Manual setup is an explicit per-ticket opt-in by the user, so an
+  // unlabeled ticket still resolves to `models.default` — different from
+  // the auto-pickup path, where unlabeled tickets are ignored.
+  const modelResolution = resolveModelFor({ labels: raw.labels, config });
+  warnIfDisabledFallback(ticket, modelResolution, config);
+  let model = config.models.default;
+  if (modelResolution.kind === "matched") {
+    ({ model } = modelResolution);
+  } else if (modelResolution.kind === "disabled-fallback") {
+    model = modelResolution.fallbackModel;
+  }
+  return {
+    uuid: raw.uuid,
+    title: raw.title,
+    description: raw.description,
+    repository: repositoryResolution.repository,
+    model,
+    teamId: raw.teamId,
   };
 }
 
@@ -432,14 +522,14 @@ function parseAgentLabels(
 
 function warnIfDisabledFallback(
   ticket: string,
-  parsed: ParsedAgentLabels | undefined,
+  modelResolution: ModelResolution,
   config: ResolvedConfig,
 ): void {
-  if (parsed?.disabledFallback === undefined) {
+  if (modelResolution.kind !== "disabled-fallback") {
     return;
   }
   log(
-    `${ticket.toLowerCase()}: agent-${parsed.disabledFallback} label refers to a disabled model; falling back to models.default (${config.models.default})`,
+    `${ticket.toLowerCase()}: agent-${modelResolution.requestedModel} label refers to a disabled model; falling back to models.default (${config.models.default})`,
   );
 }
 
