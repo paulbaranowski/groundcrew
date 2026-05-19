@@ -375,6 +375,104 @@ async function probeWorkspaceSection(
   };
 }
 
+function repoDirFromEntry(entry: WorktreeEntry, deps: TicketStatusDependencies): string {
+  return `${deps.config.workspace.projectDir}/${entry.repository}`;
+}
+
+interface LocalBranchSectionOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  probe: LocalBranchProbe;
+  branch: string | undefined;
+}
+
+async function probeLocalBranchSection(
+  deps: TicketStatusDependencies,
+  entry: WorktreeEntry | undefined,
+): Promise<LocalBranchSectionOutput> {
+  if (entry === undefined) {
+    return {
+      checks: [],
+      skipReason: "repo dir unresolved",
+      probe: { kind: "absent" },
+      branch: undefined,
+    };
+  }
+  const repoDir = repoDirFromEntry(entry, deps);
+  const probe = await deps.probeLocalBranch({
+    repoDir,
+    branch: entry.branchName,
+    defaultBranch: deps.config.git.defaultBranch,
+  });
+  if (probe.kind === "present") {
+    const defaultBranchName = probe.defaultBranch ?? deps.config.git.defaultBranch;
+    return {
+      checks: [
+        {
+          name: "Local branch exists",
+          status: "ok",
+          detail: `${entry.branchName}, ${probe.ahead} ahead / ${probe.behind} behind origin/${defaultBranchName}`,
+        },
+      ],
+      skipReason: "",
+      probe,
+      branch: entry.branchName,
+    };
+  }
+  if (probe.kind === "absent") {
+    return {
+      checks: [{ name: "Local branch exists", status: "fail", detail: "branch not in git" }],
+      skipReason: "",
+      probe,
+      branch: entry.branchName,
+    };
+  }
+  // probe.kind === "unknown"
+  return {
+    checks: [{ name: "Local branch exists", status: "skipped", detail: probe.reason }],
+    skipReason: "",
+    probe,
+    branch: entry.branchName,
+  };
+}
+
+interface RemoteBranchSectionOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  probe: RemoteBranchProbe;
+}
+
+async function probeRemoteBranchSection(
+  deps: TicketStatusDependencies,
+  entry: WorktreeEntry | undefined,
+): Promise<RemoteBranchSectionOutput> {
+  if (entry === undefined) {
+    return { checks: [], skipReason: "repo dir unresolved", probe: { kind: "absent" } };
+  }
+  const repoDir = repoDirFromEntry(entry, deps);
+  const probe = await deps.probeRemoteBranch({
+    repoDir,
+    branch: entry.branchName,
+    doFetch: deps.doFetch,
+  });
+  if (probe.kind === "present") {
+    return { checks: [{ name: "Branch present on origin", status: "ok" }], skipReason: "", probe };
+  }
+  if (probe.kind === "absent") {
+    return {
+      checks: [{ name: "Branch present on origin", status: "fail", detail: "not pushed" }],
+      skipReason: "",
+      probe,
+    };
+  }
+  // probe.kind === "unknown"
+  return {
+    checks: [{ name: "Branch present on origin", status: "skipped", detail: probe.reason }],
+    skipReason: "",
+    probe,
+  };
+}
+
 /**
  * Pure-with-async orchestrator that gathers per-section checks and a single
  * recovery verdict for a ticket. All I/O happens via injected probes — the
@@ -392,6 +490,10 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
 
   const worktreeResult = await probeWorktreeSection(deps, ticket);
   const workspaceResult = await probeWorkspaceSection(deps, ticket);
+  const localResult = await probeLocalBranchSection(deps, worktreeResult.entry);
+  const remoteResult = await probeRemoteBranchSection(deps, worktreeResult.entry);
+  skipReasons.localBranch = localResult.skipReason;
+  skipReasons.remoteBranch = remoteResult.skipReason;
 
   // Other sections are stubbed for this task — Tasks 5-8 fill them in. The
   // provisional `skipped → non-terminal (linear skipped)` mapping below is
@@ -402,10 +504,10 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
         ? { kind: "non-terminal", stateName: "(linear skipped)" }
         : linearResult.status,
     worktree: worktreeResult.status,
-    localBranch: { kind: "absent" },
-    remoteBranch: { kind: "absent" },
+    localBranch: localResult.probe,
+    remoteBranch: remoteResult.probe,
     pullRequest: { kind: "absent" },
-    branch: ticket.toLowerCase(),
+    branch: worktreeResult.entry?.branchName ?? ticket.toLowerCase(),
     worktreeDir: worktreeResult.entry?.dir,
     workspaceName: workspaceResult.workspaceName,
   });
@@ -416,8 +518,8 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     linear: linearResult.checks,
     worktree: worktreeResult.checks,
     workspace: workspaceResult.checks,
-    localBranch: [],
-    remoteBranch: [],
+    localBranch: localResult.checks,
+    remoteBranch: remoteResult.checks,
     pullRequest: [],
     skipReasons,
     verdict,

@@ -516,3 +516,175 @@ describe("ticketStatus — Workspace section", () => {
     ]);
   });
 });
+
+describe("ticketStatus — Local branch section", () => {
+  const worktreeEntry = {
+    repository: "herds-social/herds",
+    ticket: "HRD-1",
+    branchName: "paul-hrd-1",
+    dir: "/work/herds-social/herds-HRD-1",
+    kind: "host" as const,
+  };
+
+  it("records ahead/behind counts when the branch exists", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeLocalBranch: vi
+        .fn<TicketStatusDependencies["probeLocalBranch"]>()
+        .mockResolvedValue({ kind: "present", ahead: 3, behind: 0, defaultBranch: "main" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.localBranch).toStrictEqual([
+      {
+        name: "Local branch exists",
+        status: "ok",
+        detail: "paul-hrd-1, 3 ahead / 0 behind origin/main",
+      },
+    ]);
+  });
+
+  it("falls back to the config default branch when the probe omits it", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeLocalBranch: vi
+        .fn<TicketStatusDependencies["probeLocalBranch"]>()
+        .mockResolvedValue({ kind: "present", ahead: 1, behind: 2 }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.localBranch).toStrictEqual([
+      {
+        name: "Local branch exists",
+        status: "ok",
+        detail: "paul-hrd-1, 1 ahead / 2 behind origin/main",
+      },
+    ]);
+  });
+
+  it("records fail when the branch is not in git", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeLocalBranch: vi
+        .fn<TicketStatusDependencies["probeLocalBranch"]>()
+        .mockResolvedValue({ kind: "absent" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    const [firstLine] = actual.localBranch;
+    expect(firstLine?.status).toBe("fail");
+  });
+
+  it("records skipped when probeLocalBranch reports unknown", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeLocalBranch: vi
+        .fn<TicketStatusDependencies["probeLocalBranch"]>()
+        .mockResolvedValue({ kind: "unknown", reason: "repo missing" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    const [firstLine] = actual.localBranch;
+    expect(firstLine?.status).toBe("skipped");
+    expect(firstLine?.detail).toBe("repo missing");
+  });
+
+  it("skips the section when no worktree resolves the repo dir", async () => {
+    const deps = makeDeps({
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- findWorktree returns `WorktreeEntry | undefined`; passing nothing is a TS error
+      findWorktree: vi.fn<TicketStatusDependencies["findWorktree"]>().mockReturnValue(undefined),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.localBranch).toStrictEqual([]);
+    expect(actual.skipReasons.localBranch).toBe("repo dir unresolved");
+  });
+});
+
+describe("ticketStatus — Remote branch section", () => {
+  const worktreeEntry = {
+    repository: "herds-social/herds",
+    ticket: "HRD-1",
+    branchName: "paul-hrd-1",
+    dir: "/work/herds-social/herds-HRD-1",
+    kind: "host" as const,
+  };
+
+  it("records ok when the remote returns the branch", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeRemoteBranch: vi
+        .fn<TicketStatusDependencies["probeRemoteBranch"]>()
+        .mockResolvedValue({ kind: "present" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.remoteBranch).toStrictEqual([{ name: "Branch present on origin", status: "ok" }]);
+  });
+
+  it("records fail with `(not pushed)` when absent", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeRemoteBranch: vi
+        .fn<TicketStatusDependencies["probeRemoteBranch"]>()
+        .mockResolvedValue({ kind: "absent" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.remoteBranch).toStrictEqual([
+      { name: "Branch present on origin", status: "fail", detail: "not pushed" },
+    ]);
+  });
+
+  it("records skipped when probeRemoteBranch reports unknown", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeRemoteBranch: vi
+        .fn<TicketStatusDependencies["probeRemoteBranch"]>()
+        .mockResolvedValue({ kind: "unknown", reason: "no remote" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    const [firstLine] = actual.remoteBranch;
+    expect(firstLine?.status).toBe("skipped");
+  });
+
+  it("passes `doFetch: false` through when configured", async () => {
+    const probe = vi
+      .fn<TicketStatusDependencies["probeRemoteBranch"]>()
+      .mockResolvedValue({ kind: "present" });
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeRemoteBranch: probe,
+      doFetch: false,
+    });
+
+    await ticketStatus(deps);
+
+    expect(probe).toHaveBeenCalledWith(expect.objectContaining({ doFetch: false }));
+  });
+});
