@@ -21,6 +21,20 @@ const LONG_RUNNING_COMMAND_OPTIONS = { stdio: "inherit", timeoutMs: 0 } as const
 
 export type WorktreeKind = "host";
 
+export class WorktreeAlreadyExistsError extends Error {
+  public readonly dir: string;
+
+  public constructor(dir: string) {
+    super(`Worktree already exists: ${dir}`);
+    this.dir = dir;
+    this.name = "WorktreeAlreadyExistsError";
+  }
+}
+
+export function isWorktreeAlreadyExistsError(error: unknown): error is WorktreeAlreadyExistsError {
+  return error instanceof WorktreeAlreadyExistsError;
+}
+
 export interface WorktreeEntry {
   repository: string;
   /** Linear ticket id, lowercased — e.g. "team-220". */
@@ -339,13 +353,11 @@ async function create(
   spec: WorktreeSpec,
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
-  const existing = findByTicket(config, spec.ticket).filter(
+  const existing = findByTicket(config, spec.ticket).find(
     (entry) => entry.repository === spec.repository,
   );
-  if (existing.length > 0) {
-    const [first] = existing;
-    /* v8 ignore next @preserve -- length>0 guarantees [0] is defined */
-    throw new Error(`Worktree already exists: ${first?.dir}`);
+  if (existing !== undefined) {
+    throw new WorktreeAlreadyExistsError(existing.dir);
   }
   return await createWorktree(config, spec, signal);
 }
