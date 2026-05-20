@@ -24,26 +24,14 @@ Script requirements:
   - No flag → full interactive bootstrap for first-time onboarding or
     SessionStart-hook reuse (husky install, pre-commit install, db seed,
     local-package linking).
-- Idempotent and fast. The operator pays this cost on every ticket spinup,
-  so skip work when nothing has changed. The pattern — substitute
-  `<lockfile>` and `<install-sentinel>` for what your stack uses (e.g.
-  `package-lock.json` + `node_modules`, `uv.lock` + `.venv`, `Cargo.lock` +
-  `target`):
-
-      hash256() { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; }
-      stamp="${HOME}/.cache/groundcrew/$(git rev-parse --show-toplevel | hash256 | cut -d' ' -f1).stamp"
-      dep_key="$(cat <lockfile> 2>/dev/null | hash256 | cut -d' ' -f1)"
-
-      if [ -d <install-sentinel> ] && [ "$(cat "$stamp" 2>/dev/null)" = "$dep_key" ]; then
-        exit 0
-      fi
-
-      # ... run the install ...
-
-      mkdir -p "$(dirname "$stamp")" && printf '%s\n' "$dep_key" > "$stamp"
-
-  Setup failures are logged but don't block the agent, so exit non-zero on
-  real problems so the operator sees them.
+- Fast. The operator pays this cost on every ticket spinup, and each
+  worktree starts fresh (`node_modules` / `.venv` / `target` are
+  gitignored). Use the package manager's frozen-lockfile install (`npm
+  clean-install`, `uv sync --frozen`, `cargo fetch`, etc.) and trust its
+  global cache — a "fresh" install in a new worktree should resolve from
+  `~/.cache/uv`, `~/.npm`, etc. rather than re-downloading. Setup failures
+  are logged but don't block the agent, so exit non-zero on real problems
+  so the operator sees them.
 
 Detect this repo's stack and install accordingly. Examples:
 
