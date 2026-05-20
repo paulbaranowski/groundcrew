@@ -74,6 +74,7 @@
     "spinup",
     "subshells",
     "teardownreporter",
+    "toplevel",
     "tsgolint",
     "unstub",
     "venv",
