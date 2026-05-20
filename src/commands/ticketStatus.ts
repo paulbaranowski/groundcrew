@@ -758,6 +758,22 @@ export async function runTicketStatus(parsed: StatusArguments): Promise<boolean>
 
 // ───── production probes ─────
 
+/**
+ * Reads the numeric exit status that `normalizeCommandError` in
+ * `commandRunner.ts` includes in failed-command error messages as
+ * `Exit status: <N>`. Returns undefined when no such line is present.
+ */
+function parseExitStatus(error: unknown): number | undefined {
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+  const match = /Exit status: (\d+)/.exec(error.message);
+  if (match === null || match[1] === undefined) {
+    return undefined;
+  }
+  return Number.parseInt(match[1], 10);
+}
+
 async function probeLocalBranchImpl(input: {
   repoDir: string;
   branch: string;
@@ -767,7 +783,10 @@ async function probeLocalBranchImpl(input: {
     return { kind: "unknown", reason: `repo dir not found: ${input.repoDir}` };
   }
 
-  // Does the branch exist locally? `rev-parse --verify -q` exits 0 if so.
+  // Does the branch exist locally? `rev-parse --verify -q` exits 0 if so,
+  // exit 1 specifically for a missing ref. Higher exits (typo, repo corruption,
+  // permission issue) are real failures and should surface as `unknown`, not
+  // be silently reported as an absent branch.
   try {
     await runCommandAsync("git", [
       "-C",
@@ -777,8 +796,14 @@ async function probeLocalBranchImpl(input: {
       "-q",
       input.branch,
     ]);
-  } catch {
-    return { kind: "absent" };
+  } catch (error) {
+    if (parseExitStatus(error) === 1) {
+      return { kind: "absent" };
+    }
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 
   // ahead/behind vs origin/<defaultBranch>. Output format: "<ahead>\t<behind>".
@@ -826,7 +851,10 @@ async function probeRemoteBranchImpl(input: {
     }
   }
 
-  // ls-remote --exit-code exits 0 if the ref exists, 2 otherwise.
+  // ls-remote --exit-code exits 0 if the ref exists, 2 if missing. Other
+  // exit codes (1 = network/auth/repo error, 128 = command syntax) indicate
+  // real problems that should surface as `unknown`, not be silently reported
+  // as an absent remote branch.
   try {
     await runCommandAsync("git", [
       "-C",
@@ -837,8 +865,14 @@ async function probeRemoteBranchImpl(input: {
       `refs/heads/${input.branch}`,
     ]);
     return { kind: "present" };
-  } catch {
-    return { kind: "absent" };
+  } catch (error) {
+    if (parseExitStatus(error) === 2) {
+      return { kind: "absent" };
+    }
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -882,15 +916,21 @@ async function probePullRequestImpl(input: {
       state: string;
       mergedAt: string | null;
     }[];
-    const [first] = parsed;
-    if (first === undefined) {
+    // `gh pr list --head` may return multiple PRs for the same head branch
+    // with no guaranteed ordering. Prefer an OPEN PR over a MERGED one, and
+    // only fall back to `absent` when neither exists.
+    if (parsed.length === 0) {
       return { kind: "absent" };
     }
-    if (first.mergedAt !== null && first.mergedAt !== undefined) {
-      return { kind: "merged", number: first.number, url: first.url };
+    const open = parsed.find((pullRequest) => pullRequest.state === "OPEN");
+    if (open !== undefined) {
+      return { kind: "open", number: open.number, url: open.url };
     }
-    if (first.state === "OPEN") {
-      return { kind: "open", number: first.number, url: first.url };
+    const merged = parsed.find(
+      (pullRequest) => pullRequest.mergedAt !== null && pullRequest.mergedAt !== undefined,
+    );
+    if (merged !== undefined) {
+      return { kind: "merged", number: merged.number, url: merged.url };
     }
     return { kind: "absent" };
   } catch (error) {
