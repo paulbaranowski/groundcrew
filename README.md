@@ -214,6 +214,10 @@ The bare `exit 0` suppresses the `[groundcrew] … setup: not configured` hint f
 
 For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.claude/setup.sh`](./.claude/setup.sh) — kept at the legacy path because it doubles as a Claude Code SessionStart hook.
 
+### Generating it with an agent
+
+To have a coding agent (Claude Code, Cursor, etc.) scaffold `.groundcrew/setup.sh` for a repo you're onboarding, see [docs/setup-hook-agent-prompt.md](./docs/setup-hook-agent-prompt.md) — it encodes the contract above as a copy-pasteable prompt.
+
 ## Manual commands
 
 ```bash
