@@ -26,6 +26,7 @@
     "clearance-allow-hosts",
     "configExample.ts",
     "dist",
+    "prompts",
     "static"
   ],
   "type": "module",

@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type * as NodeFs from "node:fs";
 
 import { ensureClearance } from "@clipboard-health/clearance";
 
@@ -12,22 +13,16 @@ import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelper
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { setupWorkspace, setupWorkspaceCli } from "./setupWorkspace.ts";
 
-interface NodeFsMock {
-  existsSync: ReturnType<typeof vi.fn<typeof existsSync>>;
-  mkdtempSync: ReturnType<typeof vi.fn<typeof mkdtempSync>>;
-  rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
-  writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
-}
-
-vi.mock(
-  "node:fs",
-  (): NodeFsMock => ({
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFs>();
+  return {
+    ...actual,
     existsSync: vi.fn<typeof existsSync>().mockReturnValue(true),
     mkdtempSync: vi.fn<typeof mkdtempSync>(),
     rmSync: vi.fn<typeof rmSync>(),
     writeFileSync: vi.fn<typeof writeFileSync>(),
-  }),
-);
+  };
+});
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };

@@ -120,7 +120,7 @@ describe("loadConfig", () => {
     expect(actual.models.definitions["codex"]?.cmd).toBe(
       "codex --dangerously-bypass-approvals-and-sandbox",
     );
-    expect(actual.prompts.initial).toContain("{{ticket}}");
+    expect(actual.prompts.initial).toBeUndefined();
   });
 
   it("accepts custom terminal statuses and dedupes them with done", async () => {

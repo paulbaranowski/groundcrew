@@ -11,6 +11,7 @@ import { detectHostCapabilities } from "../lib/host.ts";
 import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "../lib/localRunner.ts";
+import { resolvePromptForModel } from "../lib/prompts.ts";
 import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -93,6 +94,7 @@ function stageWorkspaceLaunchCommand(promptDir: string, command: string): string
 
 function stagePrompt(input: {
   config: ResolvedConfig;
+  model: string;
   ticket: string;
   ticketDetails: TicketDetails;
   worktreeName: string;
@@ -101,7 +103,7 @@ function stagePrompt(input: {
   const promptFile = join(promptDir, "prompt.txt");
   writeFileSync(
     promptFile,
-    renderPrompt(input.config.prompts.initial, {
+    renderPrompt(resolvePromptForModel(input.config, input.model), {
       ticket: input.ticket,
       worktree: input.worktreeName,
       title: input.ticketDetails.title,
@@ -169,7 +171,7 @@ export async function setupWorkspace(
       ticketDetails = options.details;
     }
 
-    const stagedPrompt = stagePrompt({ config, ticket, ticketDetails, worktreeName });
+    const stagedPrompt = stagePrompt({ config, model, ticket, ticketDetails, worktreeName });
     promptDir = stagedPrompt.directory;
 
     const secretsFile = stageBuildSecrets(promptDir);

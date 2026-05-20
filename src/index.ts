@@ -6,6 +6,13 @@ export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWork
 export type { Config, ModelDefinition, ResolvedConfig } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
 export {
+  CLAUDE_DEFAULT_PROMPT,
+  CODEX_DEFAULT_PROMPT,
+  DEFAULT_PROMPTS_BY_MODEL,
+  GENERIC_DEFAULT_PROMPT,
+  resolvePromptForModel,
+} from "./lib/prompts.ts";
+export {
   fetchBlockersForTicket,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,

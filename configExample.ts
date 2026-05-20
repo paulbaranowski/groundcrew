@@ -56,14 +56,15 @@ export const config: Config = {
   // // macOS when you need an agent to use Docker safely.
   // local: { runner: "auto" },
   //
+  // // Optional. With no override, groundcrew uses a per-model default from
+  // // the shipped `prompts/` directory: `prompts/claude.md` for `claude`,
+  // // `prompts/codex.md` for `codex`, `prompts/generic.md` for any custom
+  // // model. Read those files to see what your agent receives. Set
+  // // `prompts.initial` here to apply the same prompt to every model —
+  // // useful if your team's Linear workflow uses a status other than
+  // // "In Review", or if you want to customize the discipline.
   // prompts: {
-  //   initial: [
-  //     "Begin work on {{ticket}} ({{title}}) in the {{worktree}} wt subdirectory.",
-  //     "",
-  //     "Ticket description:",
-  //     "",
-  //     "{{description}}",
-  //   ].join("\n"),
+  //   initial: "Begin work on {{ticket}} ({{title}}) in {{worktree}}.\n\n{{description}}",
   // },
   //
   // // Terminal session manager. "auto" picks cmux when on PATH, else tmux.

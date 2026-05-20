@@ -11,6 +11,7 @@
     "**/tsconfig.lib.json",
     "**/package.json",
     "**/bin/runCli.js",
+    "prompts/**",
     "**/*.test.ts",
     "**/*.spec.ts",
     "**/examples/**"

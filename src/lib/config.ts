@@ -232,7 +232,12 @@ export interface ResolvedConfig {
     definitions: Record<string, ModelDefinition>;
   };
   prompts: {
-    initial: string;
+    /**
+     * Optional global override. When set, this prompt is used for every
+     * model. When unset, `resolvePromptForModel` (in `lib/prompts.ts`)
+     * picks the per-model default shipped with groundcrew.
+     */
+    initial: string | undefined;
   };
   /**
    * Terminal session manager. Always present — defaults to `"auto"`.
@@ -282,14 +287,6 @@ const DEFAULT_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
     usage: { codexbar: { provider: "codex" } },
   },
 };
-
-const DEFAULT_PROMPT_INITIAL = [
-  "Begin work on {{ticket}} ({{title}}) in the {{worktree}} wt subdirectory.",
-  "",
-  "Ticket description:",
-  "",
-  "{{description}}",
-].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
   "{{ticket}}",
@@ -677,7 +674,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       definitions: mergeDefinitions(user.models?.definitions),
     },
     prompts: {
-      initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
+      initial: user.prompts?.initial,
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
@@ -784,8 +781,10 @@ function validate(config: ResolvedConfig): void {
     );
   }
 
-  requireString(config.prompts.initial, "prompts.initial");
-  validatePromptPlaceholders(config.prompts.initial);
+  if (config.prompts.initial !== undefined) {
+    requireString(config.prompts.initial, "prompts.initial");
+    validatePromptPlaceholders(config.prompts.initial);
+  }
 
   requireString(config.logging.file, "logging.file");
 }
