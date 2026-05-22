@@ -783,6 +783,7 @@ describe("ticketDoctor — env checks", () => {
             stateName: "Todo",
             blockers: [],
             hasMoreBlockers: false,
+            hasChildren: false,
           }),
       });
       const result = await ticketDoctor(dependencies);
