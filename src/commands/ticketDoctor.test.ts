@@ -111,6 +111,9 @@ function makeStubDependencies(
     probeWorkingTree: vi
       .fn<TicketDoctorDependencies["probeWorkingTree"]>()
       .mockResolvedValue({ kind: "unknown" } satisfies WorktreeDirtiness),
+    resolveDefaultBranch: vi
+      .fn<TicketDoctorDependencies["resolveDefaultBranch"]>()
+      .mockResolvedValue("main"),
     probeLocalBranch: vi
       .fn<TicketDoctorDependencies["probeLocalBranch"]>()
       .mockResolvedValue({ kind: "absent" } satisfies LocalBranchProbe),
@@ -1177,6 +1180,27 @@ describe("ticketDoctor — Local branch section", () => {
     });
     const result = await ticketDoctor(dependencies);
     expect(result.localBranch[0]?.detail).toContain("origin/main");
+  });
+
+  it("resolves the per-repo default branch and feeds it to probeLocalBranch (e.g. master)", async () => {
+    const entry = makeWorktreeEntry();
+    const probeLocalBranchMock = vi
+      .fn<TicketDoctorDependencies["probeLocalBranch"]>()
+      .mockResolvedValue({ kind: "present", ahead: 1, behind: 0, defaultBranch: "master" });
+    const dependencies = makeStubDependencies({
+      findWorktree: vi.fn<TicketDoctorDependencies["findWorktree"]>().mockReturnValue(entry),
+      resolveDefaultBranch: vi
+        .fn<TicketDoctorDependencies["resolveDefaultBranch"]>()
+        .mockResolvedValue("master"),
+      probeLocalBranch: probeLocalBranchMock,
+    });
+    const result = await ticketDoctor(dependencies);
+    expect(probeLocalBranchMock).toHaveBeenCalledWith({
+      repoDir: "/work/repo-a",
+      branch: entry.branchName,
+      defaultBranch: "master",
+    });
+    expect(result.localBranch[0]?.detail).toContain("origin/master");
   });
 
   it("records fail when the branch is not in git", async () => {

@@ -29,6 +29,7 @@ import {
   type RawLinearIssue,
 } from "../lib/boardSource.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
+import { resolveDefaultBranch } from "../lib/defaultBranch.ts";
 import {
   AGENT_ANY_MODEL,
   findProjectBySlugId,
@@ -239,6 +240,14 @@ export interface TicketDoctorDependencies {
   probeWorkspaces: () => Promise<WorkspaceProbe>;
   workspaceAccessHint: (name: string) => Promise<WorkspaceAccessHint | undefined>;
   probeWorkingTree: (input: { worktreeDir: string }) => Promise<WorktreeDirtiness>;
+  /**
+   * Resolves the default branch for `repoDir` (e.g. "master" vs "main") from
+   * the local clone's `refs/remotes/<remote>/HEAD`, falling back to
+   * `config.git.defaultBranch`. Injected so probeLocalBranchSection can pass a
+   * per-repo branch into `probeLocalBranch` without each probe needing to
+   * shell out to git itself.
+   */
+  resolveDefaultBranch: (input: { repoDir: string }) => Promise<string>;
   probeLocalBranch: (input: {
     repoDir: string;
     branch: string;
@@ -772,10 +781,11 @@ async function probeLocalBranchSection(
     };
   }
   const repoDir = repoDirFromEntry(entry, deps);
+  const defaultBranch = await deps.resolveDefaultBranch({ repoDir });
   const probe = await deps.probeLocalBranch({
     repoDir,
     branch: entry.branchName,
-    defaultBranch: deps.config.git.defaultBranch,
+    defaultBranch,
   });
   if (probe.kind === "present") {
     const defaultBranchName = probe.defaultBranch ?? deps.config.git.defaultBranch;
@@ -1300,6 +1310,12 @@ export async function runTicketDoctor(parsed: TicketDoctorArguments): Promise<bo
     probeWorkspaces: async () => await workspaces.probe(config),
     workspaceAccessHint: async (name) => await workspaces.accessHint(config, name),
     probeWorkingTree: async ({ worktreeDir }) => await worktrees.probeWorkingTree({ worktreeDir }),
+    resolveDefaultBranch: async ({ repoDir }) =>
+      await resolveDefaultBranch({
+        repoDir,
+        remote: config.git.remote,
+        fallback: config.git.defaultBranch,
+      }),
     probeLocalBranch: probeLocalBranchImpl,
     probeRemoteBranch: probeRemoteBranchImpl,
     probePullRequest: probePullRequestImpl,
