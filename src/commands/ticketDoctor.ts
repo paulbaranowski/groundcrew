@@ -251,11 +251,13 @@ export interface TicketDoctorDependencies {
   probeLocalBranch: (input: {
     repoDir: string;
     branch: string;
+    remote: string;
     defaultBranch: string;
   }) => Promise<LocalBranchProbe>;
   probeRemoteBranch: (input: {
     repoDir: string;
     branch: string;
+    remote: string;
     doFetch: boolean;
   }) => Promise<RemoteBranchProbe>;
   probePullRequest: (input: { repoDir: string; branch: string }) => Promise<PullRequestProbe>;
@@ -785,6 +787,7 @@ async function probeLocalBranchSection(
   const probe = await deps.probeLocalBranch({
     repoDir,
     branch: entry.branchName,
+    remote: deps.config.git.remote,
     defaultBranch,
   });
   if (probe.kind === "present") {
@@ -794,7 +797,7 @@ async function probeLocalBranchSection(
         {
           name: "Local branch exists",
           status: "ok",
-          detail: `${entry.branchName}, ${probe.ahead} ahead / ${probe.behind} behind origin/${defaultBranchName}`,
+          detail: `${entry.branchName}, ${probe.ahead} ahead / ${probe.behind} behind ${deps.config.git.remote}/${defaultBranchName}`,
         },
       ],
       skipReason: "",
@@ -833,24 +836,26 @@ async function probeRemoteBranchSection(
     return { checks: [], skipReason: "repo dir unresolved", probe: { kind: "absent" } };
   }
   const repoDir = repoDirFromEntry(entry, deps);
+  const checkName = `Branch present on ${deps.config.git.remote}`;
   const probe = await deps.probeRemoteBranch({
     repoDir,
     branch: entry.branchName,
+    remote: deps.config.git.remote,
     doFetch: deps.doFetch,
   });
   if (probe.kind === "present") {
-    return { checks: [{ name: "Branch present on origin", status: "ok" }], skipReason: "", probe };
+    return { checks: [{ name: checkName, status: "ok" }], skipReason: "", probe };
   }
   if (probe.kind === "absent") {
     return {
-      checks: [{ name: "Branch present on origin", status: "fail", detail: "not pushed" }],
+      checks: [{ name: checkName, status: "fail", detail: "not pushed" }],
       skipReason: "",
       probe,
     };
   }
   // probe.kind === "unknown"
   return {
-    checks: [{ name: "Branch present on origin", status: "skipped", detail: probe.reason }],
+    checks: [{ name: checkName, status: "skipped", detail: probe.reason }],
     skipReason: "",
     probe,
   };
@@ -1354,6 +1359,7 @@ function parseExitStatus(error: unknown): number | undefined {
 async function probeLocalBranchImpl(input: {
   repoDir: string;
   branch: string;
+  remote: string;
   defaultBranch: string;
 }): Promise<LocalBranchProbe> {
   if (!existsSync(input.repoDir)) {
@@ -1386,7 +1392,7 @@ async function probeLocalBranchImpl(input: {
       "rev-list",
       "--left-right",
       "--count",
-      `${input.branch}...origin/${input.defaultBranch}`,
+      `${input.branch}...${input.remote}/${input.defaultBranch}`,
     ]);
     const [aheadString, behindString] = output.trim().split(/\s+/);
     const ahead = Number.parseInt(aheadString ?? "0", 10);
@@ -1400,6 +1406,7 @@ async function probeLocalBranchImpl(input: {
 async function probeRemoteBranchImpl(input: {
   repoDir: string;
   branch: string;
+  remote: string;
   doFetch: boolean;
 }): Promise<RemoteBranchProbe> {
   if (!existsSync(input.repoDir)) {
@@ -1413,7 +1420,7 @@ async function probeRemoteBranchImpl(input: {
         input.repoDir,
         "fetch",
         "--quiet",
-        "origin",
+        input.remote,
         input.branch,
       ]);
     } catch {
@@ -1427,7 +1434,7 @@ async function probeRemoteBranchImpl(input: {
       input.repoDir,
       "ls-remote",
       "--exit-code",
-      "origin",
+      input.remote,
       `refs/heads/${input.branch}`,
     ]);
     return { kind: "present" };
