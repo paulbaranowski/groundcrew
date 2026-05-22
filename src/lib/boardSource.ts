@@ -679,10 +679,14 @@ export function resolveRepositoryFor(arguments_: {
   // suffix, so the captured value can be either form. Downstream code composes
   // the resolved value with `workspace.projectDir` and needs the exact
   // `knownRepositories` entry, so resolve back to that form here.
-  const canonical = config.workspace.knownRepositories.find(
+  const candidates = config.workspace.knownRepositories.filter(
     (entry) => entry === match || entry.endsWith(`/${match}`),
   );
-  /* v8 ignore next 3 @preserve -- regex candidates are derived from knownRepositories, so a match always canonicalizes */
+  if (candidates.length !== 1) {
+    return { kind: "missing" };
+  }
+  const [canonical] = candidates;
+  /* v8 ignore next 3 @preserve -- candidates.length === 1 guarantees [0] is defined */
   if (canonical === undefined) {
     return { kind: "missing" };
   }
