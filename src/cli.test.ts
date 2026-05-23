@@ -10,6 +10,12 @@ import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import {
+  createDefaultUpgradeCliOptions,
+  upgradeCli,
+  type UpgradeCliOptions,
+} from "./commands/upgrade.ts";
+import { computeUpgradeNudge } from "./lib/upgrade.ts";
+import {
   captureConsoleError,
   captureConsoleLog,
   type ConsoleCapture,
@@ -36,6 +42,17 @@ vi.mock(import("./commands/setupWorkspace.ts"), () => ({
 vi.mock(import("./commands/setupRepos.ts"), () => ({
   setupReposCli: vi.fn<typeof setupReposCli>(),
 }));
+vi.mock(import("./commands/upgrade.ts"), () => ({
+  upgradeCli: vi.fn<typeof upgradeCli>(),
+  createDefaultUpgradeCliOptions: vi.fn<typeof createDefaultUpgradeCliOptions>(),
+}));
+vi.mock(import("./lib/upgrade.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    computeUpgradeNudge: vi.fn<typeof computeUpgradeNudge>(),
+  };
+});
 
 const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
@@ -44,6 +61,9 @@ const resumeMock = vi.mocked(resumeWorkspaceCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
+const upgradeCliMock = vi.mocked(upgradeCli);
+const createDefaultUpgradeCliOptionsMock = vi.mocked(createDefaultUpgradeCliOptions);
+const computeUpgradeNudgeMock = vi.mocked(computeUpgradeNudge);
 const requireFromTest = createRequire(import.meta.url);
 const PACKAGE_VERSION = readPackageVersion();
 const README_TEXT = readFileSync(new URL("../README.md", import.meta.url), "utf8");
@@ -65,6 +85,19 @@ function readPackageVersion(): string {
   return packageMetadata.version;
 }
 
+function makeFakeUpgradeOptions(currentVersion: string): UpgradeCliOptions {
+  return {
+    currentVersion,
+    packageName: "@clipboard-health/groundcrew",
+    installKind: "global",
+    installPath: "/install",
+    npmBin: "/usr/local/bin/npm",
+    fetcher: vi.fn<UpgradeCliOptions["fetcher"]>(),
+    runInstall: vi.fn<UpgradeCliOptions["runInstall"]>(),
+    fetchTimeoutMs: 5000,
+  };
+}
+
 describe(run, () => {
   let consoleLog: ConsoleCapture;
   let consoleError: ConsoleCapture;
@@ -80,6 +113,10 @@ describe(run, () => {
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
+    upgradeCliMock.mockResolvedValue();
+    createDefaultUpgradeCliOptionsMock.mockResolvedValue(makeFakeUpgradeOptions(PACKAGE_VERSION));
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the no-nudge branch
+    computeUpgradeNudgeMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -372,5 +409,68 @@ describe(run, () => {
 
     expect(consoleError.output()).toBe("boom");
     expect(process.exitCode).toBe(1);
+  });
+
+  it("dispatches `upgrade` to upgradeCli with the assembled options", async () => {
+    const assembled = makeFakeUpgradeOptions(PACKAGE_VERSION);
+    createDefaultUpgradeCliOptionsMock.mockResolvedValue(assembled);
+
+    await run(["upgrade", "3.2.0"]);
+
+    const call = createDefaultUpgradeCliOptionsMock.mock.calls[0]?.[0];
+    expect(call?.currentVersion).toBe(PACKAGE_VERSION);
+    expect(call?.cliMetaUrl).toMatch(/cli\.ts$/);
+    expect(upgradeCliMock).toHaveBeenCalledWith(["3.2.0"], assembled);
+  });
+
+  it("does not run the upgrade nudge when the subcommand is upgrade", async () => {
+    await run(["upgrade", "--check"]);
+
+    expect(computeUpgradeNudgeMock).not.toHaveBeenCalled();
+  });
+
+  it("prints the upgrade nudge to stderr before non-upgrade subcommands", async () => {
+    computeUpgradeNudgeMock.mockResolvedValue(
+      "[crew] 3.2.0 available — run `crew upgrade` (you have 3.1.8)",
+    );
+    await run(["doctor"]);
+
+    expect(computeUpgradeNudgeMock).toHaveBeenCalledTimes(1);
+    expect(consoleError.output()).toContain("[crew] 3.2.0 available");
+    expect(doctorMock).toHaveBeenCalledWith();
+  });
+
+  it("skips the nudge message when no upgrade is available", async () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the no-nudge branch
+    computeUpgradeNudgeMock.mockResolvedValue(undefined);
+    await run(["doctor"]);
+
+    expect(computeUpgradeNudgeMock).toHaveBeenCalledTimes(1);
+    expect(consoleError.calls).toStrictEqual([]);
+  });
+
+  it("forwards npm_config_registry and the env opt-out flag to the nudge", async () => {
+    vi.stubEnv("npm_config_registry", "https://npm.mirror.example");
+    vi.stubEnv("GROUNDCREW_NO_UPGRADE_CHECK", "1");
+    try {
+      await run(["doctor"]);
+      expect(computeUpgradeNudgeMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packageName: "@clipboard-health/groundcrew",
+          ttlMs: 6 * 60 * 60 * 1000,
+          fetchTimeoutMs: 300,
+          registry: "https://npm.mirror.example",
+          noUpgradeCheck: true,
+        }),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not run the nudge for unknown subcommands", async () => {
+    await run(["bogus"]);
+
+    expect(computeUpgradeNudgeMock).not.toHaveBeenCalled();
   });
 });

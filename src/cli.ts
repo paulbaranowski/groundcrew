@@ -7,7 +7,23 @@ import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
-import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
+import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
+import {
+  computeUpgradeNudge,
+  defaultUpgradeCheckCachePath,
+  fetchLatestVersion,
+} from "./lib/upgrade.ts";
+import {
+  errorMessage,
+  readEnvironmentVariable,
+  readTicketArgument,
+  writeError,
+  writeOutput,
+} from "./lib/util.ts";
+
+const UPGRADE_PACKAGE_NAME = "@clipboard-health/groundcrew";
+const NUDGE_TTL_MS = 6 * 60 * 60 * 1000;
+const NUDGE_FETCH_TIMEOUT_MS = 300;
 
 interface PackageMetadata {
   version: string;
@@ -66,6 +82,31 @@ async function runCli(argv: string[]): Promise<void> {
     return;
   }
   await setupWorkspaceCli(ticket, { dryRun });
+}
+
+async function upgradeCliInvoke(argv: string[]): Promise<void> {
+  const options = await createDefaultUpgradeCliOptions({
+    currentVersion: packageVersion(),
+    cliMetaUrl: import.meta.url,
+  });
+  await upgradeCli(argv, options);
+}
+
+async function maybeRunUpgradeNudge(currentVersion: string): Promise<void> {
+  const message = await computeUpgradeNudge({
+    currentVersion,
+    packageName: UPGRADE_PACKAGE_NAME,
+    cachePath: defaultUpgradeCheckCachePath(),
+    ttlMs: NUDGE_TTL_MS,
+    fetchTimeoutMs: NUDGE_FETCH_TIMEOUT_MS,
+    registry: readEnvironmentVariable("npm_config_registry"),
+    noUpgradeCheck: readEnvironmentVariable("GROUNDCREW_NO_UPGRADE_CHECK") === "1",
+    now: Date.now,
+    fetcher: fetchLatestVersion,
+  });
+  if (message !== undefined) {
+    writeError(message);
+  }
 }
 
 async function doctorCli(argv: string[]): Promise<void> {
@@ -132,6 +173,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     usage: "repos [--dry-run] [<repo>...]",
     invoke: setupCli,
   },
+  upgrade: {
+    summary: "Install the latest version of crew (or pin to a specific version)",
+    usage: "[<version>] [--check]",
+    invoke: upgradeCliInvoke,
+  },
 };
 
 function printHelp(): void {
@@ -177,6 +223,10 @@ export async function run(argv: string[]): Promise<void> {
     printHelp();
     process.exitCode = 1;
     return;
+  }
+
+  if (subcommand !== "upgrade") {
+    await maybeRunUpgradeNudge(packageVersion());
   }
 
   try {
