@@ -18,15 +18,39 @@ type FetcherFn = ComputeUpgradeNudgeOptions["fetcher"];
 
 describe(parseVersion, () => {
   it("parses major.minor.patch", () => {
-    expect(parseVersion("3.1.8")).toStrictEqual({ major: 3, minor: 1, patch: 8 });
+    expect(parseVersion("3.1.8")).toStrictEqual({
+      major: 3,
+      minor: 1,
+      patch: 8,
+      prerelease: undefined,
+    });
   });
 
-  it("ignores prerelease suffix", () => {
-    expect(parseVersion("3.1.8-beta.1")).toStrictEqual({ major: 3, minor: 1, patch: 8 });
+  it("captures the prerelease suffix", () => {
+    expect(parseVersion("3.1.8-beta.1")).toStrictEqual({
+      major: 3,
+      minor: 1,
+      patch: 8,
+      prerelease: "beta.1",
+    });
   });
 
-  it("ignores build metadata", () => {
-    expect(parseVersion("3.1.8+sha.abc")).toStrictEqual({ major: 3, minor: 1, patch: 8 });
+  it("strips build metadata after the +", () => {
+    expect(parseVersion("3.1.8+sha.abc")).toStrictEqual({
+      major: 3,
+      minor: 1,
+      patch: 8,
+      prerelease: undefined,
+    });
+  });
+
+  it("captures prerelease and strips build metadata together", () => {
+    expect(parseVersion("3.1.8-beta+sha.abc")).toStrictEqual({
+      major: 3,
+      minor: 1,
+      patch: 8,
+      prerelease: "beta",
+    });
   });
 
   it("throws on missing components", () => {
@@ -63,8 +87,20 @@ describe(compareVersions, () => {
     expect(compareVersions("4.0.0", "3.99.99")).toBe(1);
   });
 
-  it("treats versions with same numeric parts as equal regardless of suffix", () => {
-    expect(compareVersions("3.1.8-beta.1", "3.1.8")).toBe(0);
+  it("ranks a prerelease lower than the stable of the same numeric", () => {
+    expect(compareVersions("3.1.8-beta.1", "3.1.8")).toBe(-1);
+  });
+
+  it("ranks the stable higher than a prerelease of the same numeric", () => {
+    expect(compareVersions("3.1.8", "3.1.8-beta.1")).toBe(1);
+  });
+
+  it("treats two identical prerelease strings as equal", () => {
+    expect(compareVersions("3.1.8-beta.1", "3.1.8-beta.1")).toBe(0);
+  });
+
+  it("treats two distinct prereleases of the same numeric as equal (coarse comparison)", () => {
+    expect(compareVersions("3.1.8-beta.1", "3.1.8-beta.2")).toBe(0);
   });
 });
 

@@ -8,9 +8,10 @@ interface Version {
   major: number;
   minor: number;
   patch: number;
+  prerelease: string | undefined;
 }
 
-const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
+const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/;
 
 export function parseVersion(version: string): Version {
   const match = VERSION_RE.exec(version);
@@ -18,11 +19,12 @@ export function parseVersion(version: string): Version {
     throw new Error(`invalid version: ${JSON.stringify(version)}`);
   }
   return {
-    // oxlint-disable typescript/no-non-null-assertion -- VERSION_RE guarantees all three capture groups on match.
+    // oxlint-disable typescript/no-non-null-assertion -- VERSION_RE guarantees groups 1–3 on match; group 4 is optional.
     major: Number.parseInt(match[1]!, 10),
     minor: Number.parseInt(match[2]!, 10),
     patch: Number.parseInt(match[3]!, 10),
     // oxlint-enable typescript/no-non-null-assertion
+    prerelease: match[4],
   };
 }
 
@@ -33,6 +35,20 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
     if (left[key] !== right[key]) {
       return left[key] > right[key] ? 1 : -1;
     }
+  }
+  // Numeric parts equal. Per SemVer 11.3, a stable version outranks any
+  // prerelease of the same numeric. Two prereleases of the same numeric are
+  // treated as equal — we deliberately don't implement full per-identifier
+  // SemVer ordering, since the registry's `latest` dist-tag never points at
+  // a prerelease in npm convention.
+  if (left.prerelease === right.prerelease) {
+    return 0;
+  }
+  if (left.prerelease === undefined) {
+    return 1;
+  }
+  if (right.prerelease === undefined) {
+    return -1;
   }
   return 0;
 }
