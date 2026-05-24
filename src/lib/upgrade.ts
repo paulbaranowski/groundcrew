@@ -71,7 +71,7 @@ export async function fetchLatestVersion(
   }
   const { version } = body;
   if (typeof version !== "string") {
-    throw new TypeError(`registry response missing 'version' field`);
+    throw new TypeError(`registry response 'version' field is not a string`);
   }
   return version;
 }
