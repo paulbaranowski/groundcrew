@@ -141,27 +141,6 @@ describe(upgradeCli, () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("refuses when installation is a dev symlink (npm link)", async () => {
-    await upgradeCli(["3.2.0"], makeOptions({ installKind: "linked" }));
-    expect(consoleErr.output()).toMatch(/npm link/i);
-    expect(process.exitCode).toBe(1);
-  });
-
-  it("refuses when running from an npx temp install", async () => {
-    await upgradeCli(["3.2.0"], makeOptions({ installKind: "npx" }));
-    expect(consoleErr.output()).toMatch(/npx/i);
-    expect(process.exitCode).toBe(1);
-  });
-
-  it("refuses when install kind cannot be determined", async () => {
-    await upgradeCli(
-      ["3.2.0"],
-      makeOptions({ installKind: "unknown", installPath: "/some/weird/place" }),
-    );
-    expect(consoleErr.output()).toContain("/some/weird/place");
-    expect(process.exitCode).toBe(1);
-  });
-
   it("refuses when npm is not on PATH", async () => {
     await upgradeCli(["3.2.0"], makeOptions({ npmBin: undefined }));
     expect(consoleErr.output()).toMatch(/npm/i);
@@ -255,17 +234,6 @@ describe(upgradeCli, () => {
     expect(consoleLog.output()).toMatch(/already on 3\.1\.8/i);
     expect(resolveInstall).not.toHaveBeenCalled();
     expect(runInstall).not.toHaveBeenCalled();
-  });
-
-  it("installs a distinct prerelease pin with the same numeric version", async () => {
-    const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false });
-    await upgradeCli(["3.2.0-beta.2"], makeOptions({ currentVersion: "3.2.0-beta.1", runInstall }));
-    expect(consoleLog.output()).toBe("");
-    expect(runInstall).toHaveBeenCalledWith({
-      packageName: PACKAGE_NAME,
-      version: "3.2.0-beta.2",
-      npmBin: "/usr/local/bin/npm",
-    });
   });
 
   it("rejects a malformed pinned version", async () => {

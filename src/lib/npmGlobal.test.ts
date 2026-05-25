@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { PassThrough, Writable } from "node:stream";
+import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -133,97 +133,6 @@ describe(createDefaultNpmSpawner, () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderrText).toContain("EACCES");
     expect(Buffer.concat(chunks).toString("utf8")).toContain("EACCES");
-  });
-
-  it("caps captured stderr while still passing all stderr through", async () => {
-    const passthrough = new PassThrough();
-    const chunks: Buffer[] = [];
-    passthrough.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-
-    const spawner = createDefaultNpmSpawner(passthrough);
-    const result = await spawner(process.execPath, [
-      "--eval",
-      "process.stderr.write('x'.repeat(70 * 1024), () => process.exit(1));",
-    ]);
-
-    expect(result.stderrText.length).toBeLessThan(70 * 1024);
-    expect(Buffer.concat(chunks).toString("utf8")).toHaveLength(70 * 1024);
-  });
-
-  it("pauses stderr while the passthrough stream applies backpressure", async () => {
-    class SlowWritable extends Writable {
-      public readonly chunks: Buffer[] = [];
-      public readonly callbacks: (() => void)[] = [];
-
-      public override _write(
-        chunk: Buffer,
-        _encoding: BufferEncoding,
-        callback: (error?: Error | null) => void,
-      ): void {
-        this.chunks.push(Buffer.from(chunk));
-        this.callbacks.push(() => {
-          callback();
-        });
-      }
-
-      public flush(): void {
-        for (const callback of this.callbacks.splice(0)) {
-          callback();
-        }
-      }
-    }
-
-    const passthrough = new SlowWritable({ highWaterMark: 1 });
-    const spawner = createDefaultNpmSpawner(passthrough);
-    const resultPromise = spawner(process.execPath, [
-      "--eval",
-      "process.stderr.write('first'); process.stderr.write('second', () => process.exit(3));",
-    ]);
-
-    const flusher = setInterval(() => {
-      passthrough.flush();
-    }, 5);
-    const result = await resultPromise.finally(() => {
-      clearInterval(flusher);
-      passthrough.flush();
-    });
-    expect(result.exitCode).toBe(3);
-    expect(Buffer.concat(passthrough.chunks).toString("utf8")).toBe(["first", "second"].join(""));
-  });
-
-  it("resumes stderr when the passthrough stream drains", async () => {
-    class DrainingWritable extends Writable {
-      public drained = false;
-
-      public override write(_chunk: Uint8Array | string): boolean {
-        queueMicrotask(() => {
-          this.drained = true;
-          this.emit("drain");
-        });
-        return false;
-      }
-
-      public override _write(
-        _chunk: Buffer,
-        _encoding: BufferEncoding,
-        callback: (error?: Error | null) => void,
-      ): void {
-        callback();
-      }
-    }
-
-    const passthrough = new DrainingWritable();
-
-    const spawner = createDefaultNpmSpawner(passthrough);
-    const result = await spawner(process.execPath, [
-      "--eval",
-      "process.stderr.write('drain', () => process.exit(4));",
-    ]);
-
-    expect(result).toStrictEqual({ exitCode: 4, stderrText: "drain" });
-    expect(passthrough.drained).toBe(true);
   });
 
   it("rejects when the subprocess cannot be spawned", async () => {

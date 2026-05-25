@@ -101,24 +101,7 @@ function refusalMessage(
   installPath: string,
   packageName: string,
 ): string {
-  switch (kind) {
-    case "linked": {
-      return `crew is installed via 'npm link' at ${installPath}. Use 'node --run' from the source checkout instead of 'crew upgrade'.`;
-    }
-    case "npx": {
-      return `crew is running from an npx temp install. Run 'npm install -g ${packageName}' for a stable global install before using 'crew upgrade'.`;
-    }
-    case "project": {
-      return `crew is installed as a project dependency at ${installPath}, not installed globally. Run 'npm install -g ${packageName}' to use 'crew upgrade'.`;
-    }
-    case "unknown": {
-      return `crew is not installed globally — detected at ${installPath}. Run 'npm install -g ${packageName}' to use 'crew upgrade'.`;
-    }
-    /* v8 ignore next 3 @preserve */
-    default: {
-      throw new Error(`unhandled install kind: ${kind as string}`);
-    }
-  }
+  return `crew is not installed globally (${kind} at ${installPath}). Run 'npm install -g ${packageName}' to use 'crew upgrade'.`;
 }
 
 async function resolveOptions(options: UpgradeCliOptionsInput): Promise<UpgradeCliOptions> {
@@ -202,9 +185,8 @@ async function runCheck(options: UpgradeCliOptions): Promise<void> {
 }
 
 async function fetchOrFail(options: UpgradeCliOptions): Promise<string | undefined> {
-  let latest: string;
   try {
-    latest = await fetchAndPrimeUpgradeCheckCache({
+    return await fetchAndPrimeUpgradeCheckCache({
       packageName: options.packageName,
       cachePath: options.cachePath,
       fetchTimeoutMs: options.fetchTimeoutMs,
@@ -217,7 +199,6 @@ async function fetchOrFail(options: UpgradeCliOptions): Promise<string | undefin
     process.exitCode = 1;
     return undefined;
   }
-  return latest;
 }
 
 function resolvePinnedVersion(

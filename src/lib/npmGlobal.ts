@@ -3,8 +3,6 @@ import { lstatSync } from "node:fs";
 import { dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const STDERR_CAPTURE_MAX_BYTES = 64 * 1024;
-
 export type InstallKind = "global" | "linked" | "npx" | "project" | "unknown";
 
 export interface ClassifyInstallOptions {
@@ -83,45 +81,17 @@ export function createDefaultNpmSpawner(passthroughStderr: NodeJS.WritableStream
       const child = spawn(command, [...args], { stdio: ["inherit", "inherit", "pipe"] });
       const { stderr } = child;
       const chunks: Buffer[] = [];
-      let capturedBytes = 0;
-      let closeCode: number | null | undefined;
-      let stderrEnded = false;
-      let settled = false;
-
-      function maybeResolve(): void {
-        if (settled || closeCode === undefined || !stderrEnded) {
-          return;
-        }
-        settled = true;
-        resolve({
-          exitCode: closeCode ?? 1,
-          stderrText: Buffer.concat(chunks).toString("utf8"),
-        });
-      }
 
       stderr.on("data", (chunk: Buffer) => {
-        const remainingBytes = STDERR_CAPTURE_MAX_BYTES - capturedBytes;
-        if (remainingBytes > 0) {
-          const captured = Buffer.from(chunk.subarray(0, remainingBytes));
-          chunks.push(captured);
-          capturedBytes += captured.length;
-        }
-        if (!passthroughStderr.write(chunk)) {
-          stderr.pause();
-          passthroughStderr.once("drain", () => {
-            stderr.resume();
-          });
-        }
-      });
-      stderr.on("end", () => {
-        stderrEnded = true;
-        maybeResolve();
+        chunks.push(chunk);
+        passthroughStderr.write(chunk);
       });
       child.on("error", reject);
       child.on("close", (code) => {
-        closeCode = code;
-        stderr.resume();
-        maybeResolve();
+        resolve({
+          exitCode: code ?? 1,
+          stderrText: Buffer.concat(chunks).toString("utf8"),
+        });
       });
     });
 }
