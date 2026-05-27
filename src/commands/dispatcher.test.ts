@@ -6,7 +6,7 @@ import { EXHAUSTED_USAGE } from "../lib/usage.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
-import { createDispatcher } from "./dispatcher.ts";
+import { createDispatcher, formatActiveSlotList } from "./dispatcher.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
@@ -153,7 +153,104 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("At capacity");
+      expect(consoleLog.output()).toContain(
+        "At capacity (1/1) [team-a(claude)], no new work to start",
+      );
+    });
+
+    it("enumerates all in-progress tickets in the `At capacity` line, sorted by id", async () => {
+      const config = makeConfig({
+        orchestrator: {
+          maximumInProgress: 2,
+          pollIntervalMilliseconds: 1,
+          sessionLimitPercentage: 85,
+        },
+      });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config, board });
+
+      await dispatcher.runOnce({
+        // Deliberately reverse-ordered to prove the dispatcher sorts.
+        state: boardOf([
+          activeIssue({ id: "linear:team-b", model: "codex" }),
+          activeIssue({ id: "linear:team-a", model: "claude" }),
+        ]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(consoleLog.output()).toContain(
+        "At capacity (2/2) [team-a(claude), team-b(codex)], no new work to start",
+      );
+    });
+
+    it("logs `Slots 0/N used` on the happy path when no slots are occupied", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: true,
+      });
+
+      expect(consoleLog.output()).toContain("Slots 0/2 used, starting 1 ticket(s): team-1(claude)");
+    });
+
+    it("enumerates already-running tickets when some slots are occupied", async () => {
+      const config = makeConfig({
+        orchestrator: {
+          maximumInProgress: 3,
+          pollIntervalMilliseconds: 1,
+          sessionLimitPercentage: 85,
+        },
+      });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config, board });
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          activeIssue({ id: "linear:team-running-b", model: "codex" }),
+          activeIssue({ id: "linear:team-running-a", model: "claude" }),
+          todoIssue({ id: "linear:team-new" }),
+        ]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: true,
+      });
+
+      expect(consoleLog.output()).toContain(
+        "Slots 2/3 used [team-running-a(claude), team-running-b(codex)], starting 1 ticket(s): team-new(claude)",
+      );
+    });
+
+    it("includes in-progress issues with undefined model in the slot list as `id(?)`", async () => {
+      const config = makeConfig({
+        orchestrator: {
+          maximumInProgress: 2,
+          pollIntervalMilliseconds: 1,
+          sessionLimitPercentage: 85,
+        },
+      });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config, board });
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          // Defensive fallback for a source that cannot resolve model metadata.
+          activeIssue({ id: "linear:team-stale", model: undefined }),
+          todoIssue({ id: "linear:team-new" }),
+        ]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: true,
+      });
+
+      expect(consoleLog.output()).toContain(
+        "Slots 1/2 used [team-stale(?)], starting 1 ticket(s): team-new(claude)",
+      );
     });
 
     it("logs `No Todo tickets` when nothing is queued", async () => {
@@ -850,5 +947,27 @@ describe(createDispatcher, () => {
 
       expect(consoleLog.output()).not.toContain("reason=parent_with_children");
     });
+  });
+});
+
+describe(formatActiveSlotList, () => {
+  it("returns an empty string when no slots are used", () => {
+    expect(formatActiveSlotList([])).toBe("");
+  });
+
+  it("formats a single in-progress ticket as ` [id(model)]`", () => {
+    const issue = activeIssue({ id: "linear:hrd-1", model: "claude" });
+    expect(formatActiveSlotList([issue])).toBe(" [hrd-1(claude)]");
+  });
+
+  it("joins multiple tickets with `, ` and preserves caller-supplied order", () => {
+    const a = activeIssue({ id: "linear:hrd-1", model: "claude" });
+    const b = activeIssue({ id: "linear:hrd-2", model: "codex" });
+    expect(formatActiveSlotList([a, b])).toBe(" [hrd-1(claude), hrd-2(codex)]");
+  });
+
+  it("renders an undefined model as `?`", () => {
+    const issue = activeIssue({ id: "linear:hrd-9", model: undefined });
+    expect(formatActiveSlotList([issue])).toBe(" [hrd-9(?)]");
   });
 });

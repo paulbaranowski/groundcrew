@@ -14,6 +14,7 @@ import {
   type BoardState,
   type GroundcrewIssue,
   isGroundcrewIssue,
+  type Issue,
   naturalIdFromCanonical,
 } from "../lib/ticketSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
@@ -160,7 +161,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       });
     }
 
-    const activeCount = state.issues.filter((issue) => issue.status === "in-progress").length;
+    const active = state.issues
+      .filter((issue) => issue.status === "in-progress")
+      .toSorted((a, b) => a.id.localeCompare(b.id));
+    const activeCount = active.length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
@@ -170,7 +174,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     if (slots <= 0) {
       log(
-        `At capacity (${activeCount}/${config.orchestrator.maximumInProgress}), no new work to start${idleSuffix}`,
+        `At capacity (${activeCount}/${config.orchestrator.maximumInProgress})${formatActiveSlotList(active)}, no new work to start${idleSuffix}`,
       );
       return;
     }
@@ -253,7 +257,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const dispatchable = starts;
 
     log(
-      `${slots} slot(s) available, starting ${dispatchable.length} ticket(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.model})`).join(", ")}`,
+      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(active)}, starting ${dispatchable.length} ticket(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.model})`).join(", ")}`,
     );
     logEvent("dispatch", {
       outcome: "starting",
@@ -277,4 +281,14 @@ function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {
     return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tickets`;
   }
   return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tickets`;
+}
+
+export function formatActiveSlotList(active: readonly Issue[]): string {
+  if (active.length === 0) {
+    return "";
+  }
+  const entries = active
+    .map((issue) => `${naturalIdFromCanonical(issue.id)}(${issue.model ?? "?"})`)
+    .join(", ");
+  return ` [${entries}]`;
 }
