@@ -1,8 +1,15 @@
+// cspell:ignore nbbbb ncccc ghij mline -- synthetic tail fixtures (\n / SGR fused with text)
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { latestAgentLogPath, removeAgentLogsForTicket } from "./agentLog.ts";
+import {
+  latestAgentLogPath,
+  readFileTail,
+  removeAgentLogsForTicket,
+  stripAnsiEscapes,
+  tailAgentLog,
+} from "./agentLog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { writeError } from "./util.ts";
 
@@ -123,5 +130,94 @@ describe(latestAgentLogPath, () => {
 
   it("returns undefined when capture is disabled", () => {
     expect(latestAgentLogPath(makeConfig(false), "team-1")).toBeUndefined();
+  });
+});
+
+describe(stripAnsiEscapes, () => {
+  const ESC = String.fromCodePoint(27);
+  const BEL = String.fromCodePoint(7);
+
+  it("strips SGR color codes, leaving the text", () => {
+    expect(stripAnsiEscapes(`${ESC}[36m3.13.1${ESC}[39m`)).toBe("3.13.1");
+  });
+
+  it("strips CSI cursor and clear sequences", () => {
+    expect(stripAnsiEscapes(`a${ESC}[2Kb${ESC}[1Ac`)).toBe("abc");
+  });
+
+  it("strips OSC sequences terminated by BEL or ST", () => {
+    expect(stripAnsiEscapes(`${ESC}]0;window title${BEL}hello`)).toBe("hello");
+    expect(stripAnsiEscapes(`${ESC}]8;;https://x${ESC}\\link`)).toBe("link");
+  });
+
+  it("strips carriage returns", () => {
+    expect(stripAnsiEscapes("line one\r\nline two\r")).toBe("line one\nline two");
+  });
+
+  it("leaves plain text unchanged", () => {
+    expect(stripAnsiEscapes("plain text 123")).toBe("plain text 123");
+  });
+});
+
+describe(readFileTail, () => {
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), "groundcrew-readFileTail-"));
+  });
+
+  afterEach(() => {
+    rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  it("returns the whole file when it fits within maxBytes", () => {
+    const path = join(sandbox, "f.log");
+    writeFileSync(path, "hello\nworld\n");
+
+    expect(readFileTail(path, 1000)).toBe("hello\nworld\n");
+  });
+
+  it("returns trailing bytes and drops the leading partial line when larger", () => {
+    const path = join(sandbox, "f.log");
+    writeFileSync(path, "aaaa\nbbbb\ncccc\n"); // 15 bytes
+
+    // Last 7 bytes are "b\ncccc\n"; the partial "b" line is dropped.
+    expect(readFileTail(path, 7)).toBe("cccc\n");
+  });
+
+  it("returns the trailing bytes unchanged when they contain no newline", () => {
+    const path = join(sandbox, "f.log");
+    writeFileSync(path, "abcdefghij"); // 10 bytes, no newline
+
+    expect(readFileTail(path, 4)).toBe("ghij");
+  });
+});
+
+describe(tailAgentLog, () => {
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), "groundcrew-tailAgentLog-"));
+  });
+
+  afterEach(() => {
+    rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  it("returns the last N non-blank lines with escapes and CRs stripped", () => {
+    const esc = String.fromCodePoint(27);
+    writeFileSync(
+      join(sandbox, "team-1.log"),
+      `${esc}[36mline one${esc}[39m\n\nline two\r\nline three\n`,
+    );
+
+    expect(tailAgentLog(makeConfig(sandbox), "team-1", 2)).toStrictEqual([
+      "line two",
+      "line three",
+    ]);
+  });
+
+  it("returns an empty array when no log exists for the ticket", () => {
+    expect(tailAgentLog(makeConfig(sandbox), "team-1", 10)).toStrictEqual([]);
   });
 });

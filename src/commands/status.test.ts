@@ -1,3 +1,4 @@
+// cspell:ignore msetup -- synthetic agent-log tail fixture (SGR code fused with text)
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -310,6 +311,25 @@ describe(status, () => {
     const output = consoleLog.output();
     expect(output).toContain(logPath);
     expect(output).toMatch(/^ {2}log: /m);
+  });
+
+  it("shows the agent log tail (escapes stripped) before orchestrator activity", async () => {
+    const esc = String.fromCodePoint(27);
+    writeFileSync(
+      join(temporaryDirectory, "team-1.log"),
+      `${esc}[36msetup line${esc}[39m\nsh: exec: claude: not found\n`,
+    );
+    const logFile = join(temporaryDirectory, "groundcrew.log");
+    writeFileSync(logFile, "event=dispatch outcome=started ticket=team-1\n");
+    const config = makeConfig({ logging: { file: logFile, agentLogDir: temporaryDirectory } });
+
+    await status(config, { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("Agent log (last 2 lines)");
+    expect(output).toContain("sh: exec: claude: not found");
+    expect(output).not.toContain(esc);
+    expect(output.indexOf("Agent log")).toBeLessThan(output.indexOf("Orchestrator activity"));
   });
 
   it("prints unavailable fields without attempting recovery", async () => {

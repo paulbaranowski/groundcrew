@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { latestAgentLogPath } from "../lib/agentLog.ts";
+import { latestAgentLogPath, tailAgentLog } from "../lib/agentLog.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -153,6 +153,17 @@ function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
   writeOutput(logLines.join("\n"));
 }
 
+const AGENT_LOG_TAIL_LINES = 10;
+
+function writeAgentLogTail(config: ResolvedConfig, ticket: string): void {
+  const lines = tailAgentLog(config, ticket, AGENT_LOG_TAIL_LINES);
+  if (lines.length === 0) {
+    return;
+  }
+  writeSection(`Agent log (last ${lines.length} lines)`);
+  writeOutput(lines.join("\n"));
+}
+
 function formatTicketLine(
   ticket: string,
   runState: RunState | undefined,
@@ -209,6 +220,7 @@ async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Pro
   }
 
   await writeTicketWorktrees(config, ticket);
+  writeAgentLogTail(config, ticket);
   writeRecentLogs(config, ticket);
 }
 

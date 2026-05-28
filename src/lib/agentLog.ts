@@ -7,11 +7,16 @@
  */
 
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
+  readFileSync,
+  readSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -198,4 +203,73 @@ export function removeAgentLogsForTicket(config: ResolvedConfig, ticket: string)
       );
     }
   }
+}
+
+const ANSI_ESC = String.fromCodePoint(27); // ESC
+const ANSI_BEL = String.fromCodePoint(7); // BEL
+
+// Built from char codes (not a literal) so the source carries no raw control
+// bytes and oxlint's no-control-regex stays quiet. Matches, in order:
+//   - OSC: ESC ] ... terminated by BEL or ST (ESC \)
+//   - CSI: ESC [ <params> <intermediates> <final>  (SGR color, cursor, clear, …)
+//   - two-byte escapes: ESC <@-_>
+const ANSI_ESCAPE_PATTERN = new RegExp(
+  `${ANSI_ESC}\\][^${ANSI_BEL}${ANSI_ESC}]*(?:${ANSI_BEL}|${ANSI_ESC}\\\\)` +
+    `|${ANSI_ESC}\\[[0-?]*[ -/]*[@-~]` +
+    `|${ANSI_ESC}[@-_]`,
+  "g",
+);
+
+/**
+ * Remove ANSI/terminal escape sequences and carriage returns from text, leaving
+ * the readable plain-text content. Used to render a captured agent log (which is
+ * a raw terminal stream) inside `crew status` without garbling the output.
+ */
+export function stripAnsiEscapes(text: string): string {
+  return text.replaceAll(ANSI_ESCAPE_PATTERN, "").replaceAll("\r", "");
+}
+
+/**
+ * Read up to the last `maxBytes` of a file. Returns the whole file when it fits;
+ * otherwise reads the trailing window and drops the leading (likely partial)
+ * line so callers always get whole lines. Avoids slurping a large, long-running
+ * agent log into memory just to show its tail.
+ */
+export function readFileTail(path: string, maxBytes: number): string {
+  const { size } = statSync(path);
+  if (size <= maxBytes) {
+    return readFileSync(path, "utf8");
+  }
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    const bytesRead = readSync(fd, buffer, 0, maxBytes, size - maxBytes);
+    const text = buffer.toString("utf8", 0, bytesRead);
+    const firstNewline = text.indexOf("\n");
+    return firstNewline === -1 ? text : text.slice(firstNewline + 1);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const AGENT_LOG_TAIL_MAX_BYTES = 64 * 1024;
+
+/**
+ * Last `maxLines` non-blank lines of a ticket's latest agent log, with terminal
+ * escape sequences stripped to plain text. Returns `[]` when capture is disabled
+ * or no log exists. Reads only the trailing window of the file.
+ */
+export function tailAgentLog(
+  config: ResolvedConfig,
+  ticket: string,
+  maxLines: number,
+): readonly string[] {
+  const path = latestAgentLogPath(config, ticket);
+  if (path === undefined) {
+    return [];
+  }
+  const lines = stripAnsiEscapes(readFileTail(path, AGENT_LOG_TAIL_MAX_BYTES))
+    .split("\n")
+    .filter((line) => line.trim().length > 0);
+  return lines.slice(-maxLines);
 }
