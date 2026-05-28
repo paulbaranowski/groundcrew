@@ -79,27 +79,120 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
     expect(out).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --enable=all-agents sh -lc",
+      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -lc',
     );
+    expect(out).not.toContain("--enable=all-agents");
     // Setup now runs inside the wrap (fs-isolated + clearance egress), not on the host.
     expect(out).toContain(SETUP_COMMAND);
     expect(out).toContain(`exec claude "$@"`);
-    expect(out).toMatch(/sh "\$_p"$/);
+    expect(out).toContain('sh "$_p"; _safehouse_status=$?');
   });
 
-  it("force-enables agent sandbox profiles so Safehouse applies claude-code's grants through the sh wrapper", () => {
+  it("uses an agent-named shell shim so Safehouse applies only the matching agent profile", () => {
     const out = buildLaunchCommand(arguments_());
 
-    // Safehouse auto-selects an agent profile from the wrapped command's
-    // basename. groundcrew wraps the agent in `sh -lc`, so the basename it
-    // sees is `sh`; without this flag claude-code.sb (and its transitive
-    // keychain/state grants + PATH injection) is never applied and the agent
-    // hangs at startup.
-    expect(out).toContain("safehouse-clearance' --enable=all-agents ");
-    const enableIndex = out.indexOf("--enable=all-agents");
-    const shIndex = out.indexOf(" sh -lc ");
-    expect(enableIndex).toBeGreaterThan(-1);
-    expect(shIndex).toBeGreaterThan(enableIndex);
+    expect(out).toContain('_safehouse_shim_dir=$(mktemp -d "');
+    expect(out).toContain('/groundcrew-safehouse-XXXXXX")');
+    expect(out).toContain("trap 'rm -rf \"$_safehouse_shim_dir\"' EXIT");
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
+    expect(out).toContain('"$_safehouse_shim" -lc');
+    expect(out).not.toContain("--enable=all-agents");
+  });
+
+  it("infers the Safehouse profile command from an absolute agent path", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "/Users/dev/.local/bin/claude --permission-mode auto", color: "#fff" },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec /Users/dev/.local/bin/claude --permission-mode auto "$@"');
+  });
+
+  it("skips `env` environment assignments when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "env ANTHROPIC_MODEL=sonnet claude --permission-mode auto",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec env ANTHROPIC_MODEL=sonnet claude --permission-mode auto "$@"');
+  });
+
+  it("skips an `env --` delimiter when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "env -- claude --permission-mode auto",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec env -- claude --permission-mode auto "$@"');
+  });
+
+  it("skips leading environment assignments when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "ANTHROPIC_MODEL=sonnet claude --permission-mode auto",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec ANTHROPIC_MODEL=sonnet claude --permission-mode auto "$@"');
+  });
+
+  it("skips `env` and quoted environment assignments when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: String.raw`env ANTHROPIC_MODEL='claude 3' claude  --permission-mode auto`,
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain(String.raw`ANTHROPIC_MODEL='\''claude 3'\'' claude`);
+  });
+
+  it("fails loudly when the Safehouse profile command cannot be inferred", () => {
+    expect(() =>
+      buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "env ANTHROPIC_MODEL=sonnet", color: "#fff" },
+        }),
+      ),
+    ).toThrow(/Cannot infer Safehouse agent profile command/);
+
+    expect(() =>
+      buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "   ", color: "#fff" },
+        }),
+      ),
+    ).toThrow(/Cannot infer Safehouse agent profile command/);
+  });
+
+  it("rejects unsafe inferred Safehouse profile command names", () => {
+    expect(() =>
+      buildLaunchCommand(
+        arguments_({
+          definition: { cmd: String.raw`claude\ code --permission-mode auto`, color: "#fff" },
+        }),
+      ),
+    ).toThrow(/Cannot use "claude code" as a Safehouse agent profile command name/);
   });
 
   it("does not double-wrap when cmd already starts with safehouse", () => {
@@ -192,7 +285,7 @@ describe(buildLaunchCommand, () => {
       // The only unset is inside the wrapped `sh -lc`, after the wrapper token.
       const hostSegment = out.slice(0, out.indexOf("safehouse-clearance"));
       expect(hostSegment).not.toContain("unset NPM_TOKEN");
-      expect(out).toMatch(/sh "\$_p"$/);
+      expect(out).toContain('sh "$_p"; _safehouse_status=$?');
     });
   });
 
