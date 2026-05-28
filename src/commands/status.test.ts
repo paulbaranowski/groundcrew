@@ -298,6 +298,20 @@ describe(status, () => {
     expect(consoleLog.output()).not.toMatch(/^agent log: /m);
   });
 
+  it("shows the agent log path per worktree in the inventory view", async () => {
+    const logPath = join(temporaryDirectory, "team-1.log");
+    writeFileSync(logPath, "x");
+    const config = makeConfig({
+      logging: { file: join(temporaryDirectory, "missing.log"), agentLogDir: temporaryDirectory },
+    });
+
+    await status(config, {});
+
+    const output = consoleLog.output();
+    expect(output).toContain(logPath);
+    expect(output).toMatch(/^ {2}log: /m);
+  });
+
   it("prints unavailable fields without attempting recovery", async () => {
     const config = makeConfig({
       logging: { file: join(temporaryDirectory, "missing.log"), agentLogDir: false },

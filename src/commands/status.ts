@@ -364,6 +364,10 @@ async function writeInventoryWorktrees(
     writeOutput(inventoryField("state", inventoryStateText(runState, probe, entry.ticket, now)));
     writeOutput(inventoryField("repo", entry.repository));
     writeOutput(inventoryField("worktree", entry.dir));
+    const agentLogPath = latestAgentLogPath(config, entry.ticket);
+    if (agentLogPath !== undefined) {
+      writeOutput(inventoryField("log", agentLogPath));
+    }
     if (accessHint !== undefined) {
       writeOutput(inventoryField("attach", accessHint.command));
     }
