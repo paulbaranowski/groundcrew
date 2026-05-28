@@ -1,5 +1,5 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
+import { cleanUpRemovedTickets } from "../lib/runStateCleanup.ts";
 import { log } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { logTeardown } from "./teardownReporter.ts";
@@ -45,7 +45,7 @@ export async function cleanupWorkspace(
   }
 
   const result = await worktrees.teardown(config, entries, { force });
-  recordCleanedUpRuns(config, result.removed);
+  cleanUpRemovedTickets(config, result.removed);
   logTeardown(result);
   if (result.failures.length > 0) {
     throw result.failures[0]?.error;

@@ -1,3 +1,4 @@
+import { removeAgentLogsForTicket } from "../lib/agentLog.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
@@ -21,9 +22,14 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, removeRunState: vi.fn<typeof removeRunState>() };
 });
+vi.mock(import("../lib/agentLog.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, removeAgentLogsForTicket: vi.fn<typeof actual.removeAgentLogsForTicket>() };
+});
 
 const teardownMock = vi.mocked(worktrees.teardown);
 const removeRunStateMock = vi.mocked(removeRunState);
+const removeAgentLogsMock = vi.mocked(removeAgentLogsForTicket);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -92,6 +98,7 @@ describe(createCleaner, () => {
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
     expect(removeRunStateMock).toHaveBeenCalledWith(expect.anything(), "team-1");
+    expect(removeAgentLogsMock).toHaveBeenCalledWith(expect.anything(), "team-1");
     expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned ticket=team-1");
   });
 

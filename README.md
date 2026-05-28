@@ -470,6 +470,8 @@ When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm i
 
 Each tmux launch tees the pane's output to a per-launch log under `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/agents/<TICKET>-<UTC-timestamp>.log`, with a `<TICKET>.log` symlink to the latest. `crew run` prints the path on a `Log:` line right after `Worktree:` / `Branch:` — **that printed path is authoritative for a given launch**, since `logging.agentLogDir` can be overridden in config (e.g. for smoke tests). Disable with `logging.agentLogDir: false`. tmux backend only; cmux keeps its own per-workspace output history in its UI.
 
+Cleaning up a ticket removes its captured logs: both `crew cleanup <TICKET>` and the orchestrator's automatic terminal-ticket cleanup delete that ticket's `<TICKET>-*.log` files and `<TICKET>.log` symlink (best-effort — a log that won't delete is skipped, never blocking the cleanup).
+
 On the unwrapped runner (`local.runner: "none"`) the log is also a structured timeline: each captured line is prefixed with a wall-clock `HH:MM:SS`, each step emits a `[groundcrew] step: <name>` sentinel (`cd to worktree`, `source build secrets`, `run host setup`, `unset build secrets`, `stage prompt`, `agent starting`), and a `[groundcrew] exit=<N>` line fires if the launch shell exits before the agent's TUI takes over. Under the `safehouse` / `sdx` runners the launch execs into the wrapper/sandbox, so the log is the raw pane output without those sentinels.
 
 ```bash

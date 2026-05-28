@@ -5,7 +5,7 @@
  */
 
 import type { ResolvedConfig } from "../lib/config.ts";
-import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
+import { cleanUpRemovedTickets } from "../lib/runStateCleanup.ts";
 import { naturalIdFromCanonical, type BoardState } from "../lib/ticketSource.ts";
 import { log, logEvent } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -70,7 +70,7 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
       signal === undefined
         ? await worktrees.teardown(config, stale)
         : await worktrees.teardown(config, stale, { signal });
-    recordCleanedUpRuns(config, result.removed);
+    cleanUpRemovedTickets(config, result.removed);
     logTeardown(result);
     recordTeardownEvents(result);
   }

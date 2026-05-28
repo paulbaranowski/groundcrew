@@ -19,7 +19,7 @@ import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
 import { log, writeError } from "./util.ts";
 import type * as utilModule from "./util.ts";
-import { AGENT_LOG_PIPE_COMMAND, prepareAgentLog, resolveAgentLogTarget } from "./tmuxAdapter.ts";
+import { AGENT_LOG_PIPE_COMMAND, prepareAgentLog, resolveAgentLogTarget } from "./agentLog.ts";
 import {
   resolveWorkspaceKind,
   type WorkspaceCloseResult,

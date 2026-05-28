@@ -1,3 +1,4 @@
+import { removeAgentLogsForTicket } from "../lib/agentLog.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -24,11 +25,16 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, removeRunState: vi.fn<typeof removeRunState>() };
 });
+vi.mock(import("../lib/agentLog.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, removeAgentLogsForTicket: vi.fn<typeof actual.removeAgentLogsForTicket>() };
+});
 
 const loadConfigMock = vi.mocked(loadConfig);
 const findByTicketMock = vi.mocked(worktrees.findByTicket);
 const teardownMock = vi.mocked(worktrees.teardown);
 const removeRunStateMock = vi.mocked(removeRunState);
+const removeAgentLogsMock = vi.mocked(removeAgentLogsForTicket);
 
 const hostEntry: WorktreeEntry = {
   repository: "repo-a",
@@ -81,6 +87,7 @@ describe(cleanupWorkspace, () => {
 
     expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: false });
     expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
+    expect(removeAgentLogsMock).toHaveBeenCalledWith(config, "team-1");
   });
 
   it("passes --force through to teardown", async () => {
