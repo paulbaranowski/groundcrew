@@ -1,6 +1,8 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { readRunState, removeRunState } from "../lib/runState.ts";
 import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { log } from "../lib/util.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { logTeardown } from "./teardownReporter.ts";
 
@@ -40,7 +42,23 @@ export async function cleanupWorkspace(
   const entries = worktrees.findByTicket(config, ticket);
 
   if (entries.length === 0) {
-    log(`No worktree found for ${ticket}; nothing to clean up.`);
+    if (readRunState(config, ticket) === undefined) {
+      log(`No worktree found for ${ticket}; nothing to clean up.`);
+      return;
+    }
+    const workspaceProbe = await workspaces.probe(config);
+    if (workspaceProbe.kind === "unavailable") {
+      log(
+        `No worktree found for ${ticket}; workspace probe unavailable, leaving run-state intact.`,
+      );
+      return;
+    }
+    if (workspaceProbe.names.has(ticket)) {
+      log(`No worktree found for ${ticket}; workspace still present; leaving run-state intact.`);
+      return;
+    }
+    removeRunState(config, ticket);
+    log(`No worktree found for ${ticket}; cleared stale run-state.`);
     return;
   }
 

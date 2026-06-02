@@ -1,6 +1,7 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { removeRunState } from "../lib/runState.ts";
+import { readRunState, removeRunState, type RunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -23,13 +24,29 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
 });
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, removeRunState: vi.fn<typeof removeRunState>() };
+  return {
+    ...actual,
+    readRunState: vi.fn<typeof readRunState>(),
+    removeRunState: vi.fn<typeof removeRunState>(),
+  };
+});
+vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    workspaces: {
+      ...actual.workspaces,
+      probe: vi.fn<typeof actual.workspaces.probe>(),
+    },
+  };
 });
 
 const loadConfigMock = vi.mocked(loadConfig);
 const findByTicketMock = vi.mocked(worktrees.findByTicket);
 const teardownMock = vi.mocked(worktrees.teardown);
+const readRunStateMock = vi.mocked(readRunState);
 const removeRunStateMock = vi.mocked(removeRunState);
+const workspaceProbeMock = vi.mocked(workspaces.probe);
 
 const hostEntry: WorktreeEntry = {
   repository: "repo-a",
@@ -37,6 +54,19 @@ const hostEntry: WorktreeEntry = {
   branchName: "dev-team-1",
   dir: "/work/repo-a-team-1",
   kind: "host",
+};
+
+const orphanRunState: RunState = {
+  ticket: "team-1",
+  repository: "repo-a",
+  model: "claude",
+  worktreeDir: "/work/repo-a-team-1",
+  branchName: "dev-team-1",
+  workspaceName: "team-1",
+  state: "running",
+  createdAt: "2026-05-26T00:00:00.000Z",
+  updatedAt: "2026-05-26T00:01:00.000Z",
+  resumeCount: 0,
 };
 
 const config: ResolvedConfig = {
@@ -68,6 +98,9 @@ describe(cleanupWorkspace, () => {
   beforeEach(() => {
     consoleLog = captureConsoleLog();
     teardownMock.mockResolvedValue(emptyTeardownResult());
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    // `readRunStateMock` defaults to returning undefined (no orphaned
+    // run-state); cases exercising the orphan path override it per-test.
     // Teardown sub-steps (Closed workspace, Worktree removed) and best-effort
     // run-state-cleanup failures are diagnostic (debug-tier), reaching the
     // console only under verbose — these cases assert that wording.
@@ -105,6 +138,64 @@ describe(cleanupWorkspace, () => {
     await cleanupWorkspace(config, { ticket: "team-1" });
 
     expect(teardownMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("nothing to clean up");
+    expect(removeRunStateMock).not.toHaveBeenCalled();
+    expect(workspaceProbeMock).not.toHaveBeenCalled();
+  });
+
+  it("clears an orphaned run-state when no worktree is found", async () => {
+    findByTicketMock.mockReturnValue([]);
+    readRunStateMock.mockReturnValue(orphanRunState);
+
+    await cleanupWorkspace(config, { ticket: "team-1" });
+
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
+    expect(consoleLog.output()).toContain("cleared stale run-state");
+    expect(consoleLog.output()).not.toContain("nothing to clean up");
+  });
+
+  it("leaves run-state intact when no worktree is found but a workspace is present", async () => {
+    findByTicketMock.mockReturnValue([]);
+    readRunStateMock.mockReturnValue(orphanRunState);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await cleanupWorkspace(config, { ticket: "team-1" });
+
+    expect(removeRunStateMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("workspace still present; leaving run-state intact");
+  });
+
+  it("leaves run-state intact when no worktree is found and workspace probing is unavailable", async () => {
+    findByTicketMock.mockReturnValue([]);
+    readRunStateMock.mockReturnValue(orphanRunState);
+    workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await cleanupWorkspace(config, { ticket: "team-1" });
+
+    expect(removeRunStateMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("workspace probe unavailable, leaving run-state intact");
+  });
+
+  it("clears an orphaned run-state without requiring --force", async () => {
+    findByTicketMock.mockReturnValue([]);
+    readRunStateMock.mockReturnValue(orphanRunState);
+
+    await cleanupWorkspace(config, { ticket: "team-1", force: false });
+
+    expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
+  });
+
+  it("is idempotent: a second cleanup of the same orphan reports nothing to clean up", async () => {
+    findByTicketMock.mockReturnValue([]);
+    // Second call falls through to the default undefined return.
+    readRunStateMock.mockReturnValueOnce(orphanRunState);
+
+    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { ticket: "team-1" });
+
+    expect(removeRunStateMock).toHaveBeenCalledTimes(1);
+    expect(consoleLog.output()).toContain("cleared stale run-state");
     expect(consoleLog.output()).toContain("nothing to clean up");
   });
 
