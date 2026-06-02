@@ -271,36 +271,16 @@ export interface ResolvedConfig {
   };
 }
 
-/**
- * Which of `discoverUserConfig`'s three strategies produced (or would
- * produce) the active config: the `GROUNDCREW_CONFIG` env override, the
- * cosmiconfig project search, or the global XDG fallback.
- */
 export type ConfigSourceKind = "env" | "project" | "xdg";
 
-/**
- * Outcome of one resolution strategy.
- * - `hit`: this strategy won; `detail` is the resolved absolute path.
- * - `miss`: tried, found nothing; `detail` is human-readable miss text.
- * - `not-reached`: an earlier strategy already won (or an authoritative env
- *   override stopped resolution); `detail` is `"not reached"`.
- */
-export interface ConfigResolutionStep {
+export interface ConfigSource {
   kind: ConfigSourceKind;
-  status: "hit" | "miss" | "not-reached";
-  detail: string;
+  filepath: string;
 }
 
-/**
- * Existence-based trace of config discovery. Mirrors `discoverUserConfig`'s
- * priority order without parsing or validating, so `crew doctor` can show
- * where config comes from even when no file exists. `steps` is always length
- * three (env, project, xdg). `resolved` is the winner, or `undefined` when
- * nothing resolved.
- */
-export interface ConfigResolution {
-  steps: ConfigResolutionStep[];
-  resolved?: { kind: ConfigSourceKind; filepath: string };
+export interface LoadedConfig {
+  config: Readonly<ResolvedConfig>;
+  source: Readonly<ConfigSource>;
 }
 
 const DEFAULT_GIT: ResolvedConfig["git"] = {
@@ -1002,9 +982,14 @@ const explorer = cosmiconfig(COSMICONFIG_MODULE_NAME, {
   },
 });
 
-type DiscoveredConfig = NonNullable<CosmiconfigResult>;
+type CosmiconfigDiscovery = NonNullable<CosmiconfigResult>;
 
-async function loadAt(filepath: string): Promise<DiscoveredConfig> {
+interface DiscoveredConfig {
+  result: CosmiconfigDiscovery;
+  source: ConfigSource;
+}
+
+async function loadAt(filepath: string): Promise<CosmiconfigDiscovery> {
   const result = await explorer.load(filepath);
   if (result === null) {
     fail(
@@ -1020,64 +1005,6 @@ function findXdgConfigFile(): string | undefined {
   );
 }
 
-/**
- * Existence-based, parse-free trace of config discovery for `crew doctor`.
- * Mirrors `discoverUserConfig`'s priority order (env override → project
- * search → XDG fallback) but never throws "no config found": absence is
- * represented by `resolved === undefined` plus miss/not-reached steps. The
- * env override is authoritative — set-but-missing stops resolution rather
- * than falling through, matching `discoverUserConfig` where a bad override
- * is fatal.
- *
- * The one place it can throw is the project step: cosmiconfig's `search`
- * parses as it finds, so a malformed discovered project config surfaces
- * here. `doctor` catches that and reports it via the existing config-error
- * path.
- */
-export async function resolveConfigSource(): Promise<ConfigResolution> {
-  const steps: ConfigResolutionStep[] = [];
-
-  const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
-  if (override !== undefined && override.length > 0) {
-    const overridePath = path.resolve(override);
-    if (existsSync(overridePath)) {
-      steps.push({ kind: "env", status: "hit", detail: overridePath });
-      steps.push({ kind: "project", status: "not-reached", detail: "not reached" });
-      steps.push({ kind: "xdg", status: "not-reached", detail: "not reached" });
-      return { steps, resolved: { kind: "env", filepath: overridePath } };
-    }
-    steps.push({ kind: "env", status: "miss", detail: `set but not found: ${overridePath}` });
-    steps.push({ kind: "project", status: "not-reached", detail: "not reached" });
-    steps.push({ kind: "xdg", status: "not-reached", detail: "not reached" });
-    return { steps };
-  }
-  steps.push({ kind: "env", status: "miss", detail: "not set" });
-
-  const project = await explorer.search(process.cwd());
-  if (project !== null && project.isEmpty !== true) {
-    steps.push({ kind: "project", status: "hit", detail: project.filepath });
-    steps.push({ kind: "xdg", status: "not-reached", detail: "not reached" });
-    return { steps, resolved: { kind: "project", filepath: project.filepath } };
-  }
-  steps.push({
-    kind: "project",
-    status: "miss",
-    detail: `no match (searched up from ${process.cwd()})`,
-  });
-
-  const xdgPath = findXdgConfigFile();
-  if (xdgPath !== undefined) {
-    steps.push({ kind: "xdg", status: "hit", detail: xdgPath });
-    return { steps, resolved: { kind: "xdg", filepath: xdgPath } };
-  }
-  steps.push({
-    kind: "xdg",
-    status: "miss",
-    detail: `not found (${xdgConfigPath("groundcrew", "crew.config.ts")})`,
-  });
-  return { steps };
-}
-
 async function discoverUserConfig(): Promise<DiscoveredConfig> {
   const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
   if (override !== undefined && override.length > 0) {
@@ -1085,17 +1012,19 @@ async function discoverUserConfig(): Promise<DiscoveredConfig> {
     if (!existsSync(overridePath)) {
       fail(`GROUNDCREW_CONFIG=${overridePath} not found`);
     }
-    return await loadAt(overridePath);
+    const result = await loadAt(overridePath);
+    return { result, source: { kind: "env", filepath: result.filepath } };
   }
 
   const project = await explorer.search(process.cwd());
   if (project !== null && project.isEmpty !== true) {
-    return project;
+    return { result: project, source: { kind: "project", filepath: project.filepath } };
   }
 
   const xdgPath = findXdgConfigFile();
   if (xdgPath !== undefined) {
-    return await loadAt(xdgPath);
+    const result = await loadAt(xdgPath);
+    return { result, source: { kind: "xdg", filepath: result.filepath } };
   }
 
   // Throw directly so oxlint's `consistent-return` rule sees a
@@ -1108,14 +1037,14 @@ async function discoverUserConfig(): Promise<DiscoveredConfig> {
   );
 }
 
-let cached: Readonly<ResolvedConfig> | undefined;
+let cached: Readonly<LoadedConfig> | undefined;
 
-export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
+export async function loadConfigWithSource(): Promise<Readonly<LoadedConfig>> {
   if (cached) {
     return cached;
   }
 
-  const result = await discoverUserConfig();
+  const { result, source } = await discoverUserConfig();
   const { filepath, isEmpty } = result;
   const userConfig: unknown = result.config;
   if (isEmpty === true || !isPlainObject(userConfig)) {
@@ -1132,6 +1061,14 @@ export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
 
   setLogFile(resolved.logging.file);
 
-  cached = Object.freeze(resolved);
+  cached = Object.freeze({
+    config: Object.freeze(resolved),
+    source: Object.freeze(source),
+  });
   return cached;
+}
+
+export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
+  const loadedConfig = await loadConfigWithSource();
+  return loadedConfig.config;
 }

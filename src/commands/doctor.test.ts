@@ -4,9 +4,9 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, type sourcesFromConfig } from "../lib/buildSources.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import {
-  type ConfigResolution,
-  loadConfig,
-  resolveConfigSource,
+  type ConfigSource,
+  type LoadedConfig,
+  loadConfigWithSource,
   type ResolvedConfig,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -30,8 +30,7 @@ vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    loadConfig: vi.fn<typeof loadConfig>(),
-    resolveConfigSource: vi.fn<typeof resolveConfigSource>(),
+    loadConfigWithSource: vi.fn<typeof loadConfigWithSource>(),
   };
 });
 vi.mock(import("../lib/host.ts"), async (importOriginal) => {
@@ -71,10 +70,10 @@ const existsMock = vi.mocked(existsSync);
 const statMock = vi.mocked(statSync);
 const buildSourcesMock = vi.mocked(buildSources);
 const createBoardMock = vi.mocked(createBoard);
-const loadConfigMock = vi.mocked(loadConfig);
-const resolveConfigSourceMock = vi.mocked(resolveConfigSource);
+const loadConfigWithSourceMock = vi.mocked(loadConfigWithSource);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const boardVerifyMock = vi.fn<Board["verify"]>();
+const DEFAULT_CONFIG_SOURCE: ConfigSource = { kind: "project", filepath: "/work/crew.config.ts" };
 
 /**
  * A minimal Board whose `verify()` is the controllable mock. The other
@@ -127,16 +126,24 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
   };
 }
 
-function projectResolution(filepath = "/work/crew.config.ts"): ConfigResolution {
+function makeLoadedConfig(
+  config: ResolvedConfig,
+  source: ConfigSource = DEFAULT_CONFIG_SOURCE,
+): LoadedConfig {
   return {
-    steps: [
-      { kind: "env", status: "miss", detail: "not set" },
-      { kind: "project", status: "hit", detail: filepath },
-      { kind: "xdg", status: "not-reached", detail: "not reached" },
-    ],
-    resolved: { kind: "project", filepath },
+    config,
+    source,
   };
 }
+
+const loadConfigMock = {
+  mockResolvedValue(config: ResolvedConfig): void {
+    loadConfigWithSourceMock.mockResolvedValue(makeLoadedConfig(config));
+  },
+  mockRejectedValue(error: unknown): void {
+    loadConfigWithSourceMock.mockRejectedValue(error);
+  },
+};
 
 function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   return {
@@ -199,7 +206,6 @@ describe(doctor, () => {
     existsMock.mockReturnValue(true);
     statMock.mockReturnValue(statsWithDirectoryValue(true));
     detectHostMock.mockResolvedValue(host());
-    resolveConfigSourceMock.mockResolvedValue(projectResolution());
     buildSourcesMock.mockResolvedValue([stubSource("linear")]);
     createBoardMock.mockReturnValue(stubBoard());
     boardVerifyMock.mockResolvedValue();
@@ -214,58 +220,25 @@ describe(doctor, () => {
     vi.resetAllMocks();
   });
 
-  it("renders the config resolution section with the winning path", async () => {
-    loadConfigMock.mockResolvedValue(makeConfig());
-    resolveConfigSourceMock.mockResolvedValue(projectResolution("/work/crew.config.ts"));
+  it("renders the config source with the load verdict", async () => {
+    loadConfigWithSourceMock.mockResolvedValue(
+      makeLoadedConfig(makeConfig(), { kind: "env", filepath: "/work/crew.config.ts" }),
+    );
 
     const actual = await doctor();
 
     expect(actual).toBe(true);
     const output = consoleLog.output();
-    expect(output).toContain("Config resolution");
-    expect(output).toContain("project search (from cwd)");
-    expect(output).toContain("✓ /work/crew.config.ts");
-    expect(output).toContain("GROUNDCREW_CONFIG env var");
-    expect(output).toContain("[ok] config loaded");
-  });
-
-  it("reports no config found and skips loadConfig when nothing resolves", async () => {
-    resolveConfigSourceMock.mockResolvedValue({
-      steps: [
-        { kind: "env", status: "miss", detail: "not set" },
-        { kind: "project", status: "miss", detail: "no match (searched up from /work)" },
-        {
-          kind: "xdg",
-          status: "miss",
-          detail: "not found (/home/u/.config/groundcrew/crew.config.ts)",
-        },
-      ],
-    });
-
-    const actual = await doctor();
-
-    expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("[--] no config found");
-    expect(loadConfigMock).not.toHaveBeenCalled();
-  });
-
-  it("reports a config error when resolution throws on a malformed config", async () => {
-    resolveConfigSourceMock.mockRejectedValue(new Error("parse blew up"));
-
-    const actual = await doctor();
-
-    expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("config: parse blew up");
-    expect(loadConfigMock).not.toHaveBeenCalled();
+    expect(output).toContain("[ok] config loaded — /work/crew.config.ts (GROUNDCREW_CONFIG)");
   });
 
   it("returns false when config loading fails", async () => {
-    loadConfigMock.mockRejectedValue(new Error("bad config"));
+    loadConfigMock.mockRejectedValue(new Error("GROUNDCREW_CONFIG=/missing.ts not found"));
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("config: bad config");
+    expect(consoleLog.output()).toContain("config: GROUNDCREW_CONFIG=/missing.ts not found");
   });
 
   it("returns false when host-capability probing throws", async () => {

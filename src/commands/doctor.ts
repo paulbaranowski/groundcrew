@@ -8,13 +8,11 @@ import { existsSync, statSync } from "node:fs";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import {
-  type ConfigResolution,
   type ConfigSourceKind,
   type LocalRunner,
   type LocalRunnerSetting,
-  loadConfig,
+  loadConfigWithSource,
   type ResolvedConfig,
-  resolveConfigSource,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
@@ -28,25 +26,10 @@ const MAX_TOKENS_PER_CMD = 2;
 const BUILT_IN_MODEL_NAMES = ["claude", "codex"] as const;
 
 const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
-  env: "GROUNDCREW_CONFIG env var",
-  project: "project search (from cwd)",
-  xdg: "global XDG fallback",
+  env: "GROUNDCREW_CONFIG",
+  project: "project",
+  xdg: "global XDG",
 };
-
-// Widest label ("GROUNDCREW_CONFIG env var" / "project search (from cwd)" are
-// both 25) plus a two-space gutter, so the detail column lines up.
-const CONFIG_LABEL_WIDTH = 27;
-
-function reportConfigResolution(resolution: ConfigResolution): void {
-  writeOutput();
-  writeOutput("Config resolution");
-  writeOutput("-----------------");
-  for (const step of resolution.steps) {
-    const label = CONFIG_SOURCE_LABELS[step.kind].padEnd(CONFIG_LABEL_WIDTH);
-    const marker = step.status === "hit" ? "✓ " : "";
-    writeOutput(`  ${label}${marker}${step.detail}`);
-  }
-}
 
 interface Check {
   name: string;
@@ -196,25 +179,12 @@ export async function doctor(): Promise<boolean> {
   writeOutput("groundcrew doctor");
   writeOutput("=================");
 
-  let resolution: ConfigResolution;
-  try {
-    resolution = await resolveConfigSource();
-  } catch (error) {
-    // A malformed *discovered* project config makes cosmiconfig's search throw
-    // during resolution. Fall back to the existing config-error verdict.
-    writeOutput(`[--] config: ${errorMessage(error)}`);
-    return false;
-  }
-  reportConfigResolution(resolution);
-  if (resolution.resolved === undefined) {
-    writeOutput("[--] no config found");
-    return false;
-  }
-
   let config: ResolvedConfig;
   try {
-    config = await loadConfig();
-    writeOutput("[ok] config loaded");
+    const { config: loadedConfig, source } = await loadConfigWithSource();
+    config = loadedConfig;
+    const sourceLabel = CONFIG_SOURCE_LABELS[source.kind];
+    writeOutput(`[ok] config loaded — ${source.filepath} (${sourceLabel})`);
   } catch (error) {
     writeOutput(`[--] config: ${errorMessage(error)}`);
     return false;
