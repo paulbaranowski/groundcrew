@@ -7,15 +7,22 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, ResolvedConfig } from "./config.ts";
+import type { Config, ConfigResolution, ResolvedConfig } from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
+  resolveConfigSource: () => Promise<ConfigResolution>;
 }
 
 async function loadFreshConfig(): Promise<ConfigModule> {
   vi.resetModules();
   return await import("./config.ts");
+}
+
+async function freshResolveConfigSource(): Promise<() => Promise<ConfigResolution>> {
+  vi.resetModules();
+  const module_ = await import("./config.ts");
+  return module_.resolveConfigSource;
 }
 
 const VALID_WORKSPACE = (projectDir: string) => ({
@@ -1489,5 +1496,114 @@ describe("loadConfig", () => {
   it("fails with a discovery error when no config exists anywhere", async () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/no crew config found/);
+  });
+});
+
+describe("resolveConfigSource", () => {
+  const originalEnvironment = snapshotEnvironmentVariables();
+  const ENV_KEYS = ["GROUNDCREW_CONFIG", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"] as const;
+  let temporary: string;
+
+  beforeEach(() => {
+    temporary = mkdtempSync(path.join(tmpdir(), "groundcrew-resolve-"));
+    for (const key of ENV_KEYS) {
+      deleteEnvironmentVariable(key);
+    }
+    setEnvironmentVariable("XDG_CONFIG_HOME", path.join(temporary, "xdg-config"));
+    setEnvironmentVariable("XDG_STATE_HOME", path.join(temporary, "xdg-state"));
+    vi.spyOn(process, "cwd").mockReturnValue(temporary);
+  });
+
+  afterEach(() => {
+    rmSync(temporary, { recursive: true, force: true });
+    for (const key of ENV_KEYS) {
+      const original = originalEnvironment[key];
+      if (original === undefined) {
+        deleteEnvironmentVariable(key);
+      } else {
+        setEnvironmentVariable(key, original);
+      }
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("reports an env-override hit and marks later strategies not-reached", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const resolveConfigSource = await freshResolveConfigSource();
+    const resolution = await resolveConfigSource();
+
+    expect(resolution.resolved).toStrictEqual({ kind: "env", filepath: path.resolve(configPath) });
+    expect(resolution.steps.map((s) => s.kind)).toStrictEqual(["env", "project", "xdg"]);
+    expect(resolution.steps[0]).toStrictEqual({
+      kind: "env",
+      status: "hit",
+      detail: path.resolve(configPath),
+    });
+    expect(resolution.steps[1]?.status).toBe("not-reached");
+    expect(resolution.steps[2]?.status).toBe("not-reached");
+  });
+
+  it("treats a set-but-missing env override as a fatal miss that stops resolution", async () => {
+    const missingPath = path.join(temporary, "does-not-exist.ts");
+    setEnvironmentVariable("GROUNDCREW_CONFIG", missingPath);
+
+    const resolveConfigSource = await freshResolveConfigSource();
+    const resolution = await resolveConfigSource();
+
+    expect(resolution.resolved).toBeUndefined();
+    expect(resolution.steps[0]).toStrictEqual({
+      kind: "env",
+      status: "miss",
+      detail: `set but not found: ${path.resolve(missingPath)}`,
+    });
+    expect(resolution.steps[1]?.status).toBe("not-reached");
+    expect(resolution.steps[2]?.status).toBe("not-reached");
+  });
+
+  it("reports a project-search hit when a crew.config.ts sits in the cwd", async () => {
+    const projectConfigPath = path.join(temporary, "crew.config.ts");
+    writeFileSync(projectConfigPath, validConfigSource({ workspace: VALID_WORKSPACE(temporary) }));
+
+    const resolveConfigSource = await freshResolveConfigSource();
+    const resolution = await resolveConfigSource();
+
+    expect(resolution.resolved?.kind).toBe("project");
+    expect(resolution.resolved?.filepath).toBe(projectConfigPath);
+    expect(resolution.steps[0]).toStrictEqual({ kind: "env", status: "miss", detail: "not set" });
+    expect(resolution.steps[1]?.status).toBe("hit");
+    expect(resolution.steps[2]?.status).toBe("not-reached");
+  });
+
+  it("falls back to the XDG config when no env override or project config exists", async () => {
+    const xdgDir = path.join(temporary, "xdg-config", "groundcrew");
+    mkdirSync(xdgDir, { recursive: true });
+    const xdgConfigPath_ = path.join(xdgDir, "crew.config.ts");
+    writeFileSync(xdgConfigPath_, validConfigSource({ workspace: VALID_WORKSPACE(temporary) }));
+
+    const resolveConfigSource = await freshResolveConfigSource();
+    const resolution = await resolveConfigSource();
+
+    expect(resolution.resolved?.kind).toBe("xdg");
+    expect(resolution.resolved?.filepath).toBe(xdgConfigPath_);
+    expect(resolution.steps[1]?.status).toBe("miss");
+    expect(resolution.steps[1]?.detail).toContain(`searched up from ${temporary}`);
+    expect(resolution.steps[2]?.status).toBe("hit");
+  });
+
+  it("returns no resolution and three miss/not-reached steps when nothing is found", async () => {
+    const resolveConfigSource = await freshResolveConfigSource();
+    const resolution = await resolveConfigSource();
+
+    expect(resolution.resolved).toBeUndefined();
+    expect(resolution.steps.map((s) => s.kind)).toStrictEqual(["env", "project", "xdg"]);
+    expect(resolution.steps[0]?.detail).toBe("not set");
+    expect(resolution.steps[1]?.status).toBe("miss");
+    expect(resolution.steps[2]?.status).toBe("miss");
+    expect(resolution.steps[2]?.detail).toContain("not found (");
   });
 });

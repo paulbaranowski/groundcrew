@@ -271,6 +271,38 @@ export interface ResolvedConfig {
   };
 }
 
+/**
+ * Which of `discoverUserConfig`'s three strategies produced (or would
+ * produce) the active config: the `GROUNDCREW_CONFIG` env override, the
+ * cosmiconfig project search, or the global XDG fallback.
+ */
+export type ConfigSourceKind = "env" | "project" | "xdg";
+
+/**
+ * Outcome of one resolution strategy.
+ * - `hit`: this strategy won; `detail` is the resolved absolute path.
+ * - `miss`: tried, found nothing; `detail` is human-readable miss text.
+ * - `not-reached`: an earlier strategy already won (or an authoritative env
+ *   override stopped resolution); `detail` is `"not reached"`.
+ */
+export interface ConfigResolutionStep {
+  kind: ConfigSourceKind;
+  status: "hit" | "miss" | "not-reached";
+  detail: string;
+}
+
+/**
+ * Existence-based trace of config discovery. Mirrors `discoverUserConfig`'s
+ * priority order without parsing or validating, so `crew doctor` can show
+ * where config comes from even when no file exists. `steps` is always length
+ * three (env, project, xdg). `resolved` is the winner, or `undefined` when
+ * nothing resolved.
+ */
+export interface ConfigResolution {
+  steps: ConfigResolutionStep[];
+  resolved?: { kind: ConfigSourceKind; filepath: string };
+}
+
 const DEFAULT_GIT: ResolvedConfig["git"] = {
   remote: "origin",
   defaultBranch: "main",
@@ -986,6 +1018,64 @@ function findXdgConfigFile(): string | undefined {
   return XDG_FALLBACK_NAMES.map((name) => xdgConfigPath("groundcrew", name)).find((p) =>
     existsSync(p),
   );
+}
+
+/**
+ * Existence-based, parse-free trace of config discovery for `crew doctor`.
+ * Mirrors `discoverUserConfig`'s priority order (env override → project
+ * search → XDG fallback) but never throws "no config found": absence is
+ * represented by `resolved === undefined` plus miss/not-reached steps. The
+ * env override is authoritative — set-but-missing stops resolution rather
+ * than falling through, matching `discoverUserConfig` where a bad override
+ * is fatal.
+ *
+ * The one place it can throw is the project step: cosmiconfig's `search`
+ * parses as it finds, so a malformed discovered project config surfaces
+ * here. `doctor` catches that and reports it via the existing config-error
+ * path.
+ */
+export async function resolveConfigSource(): Promise<ConfigResolution> {
+  const steps: ConfigResolutionStep[] = [];
+
+  const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
+  if (override !== undefined && override.length > 0) {
+    const overridePath = path.resolve(override);
+    if (existsSync(overridePath)) {
+      steps.push({ kind: "env", status: "hit", detail: overridePath });
+      steps.push({ kind: "project", status: "not-reached", detail: "not reached" });
+      steps.push({ kind: "xdg", status: "not-reached", detail: "not reached" });
+      return { steps, resolved: { kind: "env", filepath: overridePath } };
+    }
+    steps.push({ kind: "env", status: "miss", detail: `set but not found: ${overridePath}` });
+    steps.push({ kind: "project", status: "not-reached", detail: "not reached" });
+    steps.push({ kind: "xdg", status: "not-reached", detail: "not reached" });
+    return { steps };
+  }
+  steps.push({ kind: "env", status: "miss", detail: "not set" });
+
+  const project = await explorer.search(process.cwd());
+  if (project !== null && project.isEmpty !== true) {
+    steps.push({ kind: "project", status: "hit", detail: project.filepath });
+    steps.push({ kind: "xdg", status: "not-reached", detail: "not reached" });
+    return { steps, resolved: { kind: "project", filepath: project.filepath } };
+  }
+  steps.push({
+    kind: "project",
+    status: "miss",
+    detail: `no match (searched up from ${process.cwd()})`,
+  });
+
+  const xdgPath = findXdgConfigFile();
+  if (xdgPath !== undefined) {
+    steps.push({ kind: "xdg", status: "hit", detail: xdgPath });
+    return { steps, resolved: { kind: "xdg", filepath: xdgPath } };
+  }
+  steps.push({
+    kind: "xdg",
+    status: "miss",
+    detail: `not found (${xdgConfigPath("groundcrew", "crew.config.ts")})`,
+  });
+  return { steps };
 }
 
 async function discoverUserConfig(): Promise<DiscoveredConfig> {
