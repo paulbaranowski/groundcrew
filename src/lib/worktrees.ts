@@ -325,6 +325,11 @@ async function removeWorktree(
   options: { force: boolean; signal?: AbortSignal },
 ): Promise<void> {
   const projectDir = resolve(config.workspace.projectDir);
+  const recipe = recipeFor(config, entry.repository);
+  if (recipe.remove !== undefined) {
+    await removeScriptedWorktree(config, entry, recipe.remove, options);
+    return;
+  }
   const repoDir = resolve(projectDir, entry.repository);
 
   if (existsSync(entry.dir)) {
@@ -396,6 +401,46 @@ async function removeWorktree(
     branchName: entry.branchName,
     ...signalProperty(options.signal),
   });
+}
+
+async function removeScriptedWorktree(
+  config: ResolvedConfig,
+  entry: WorktreeEntry,
+  removeTemplate: string,
+  options: { force: boolean; signal?: AbortSignal },
+): Promise<void> {
+  const projectDir = resolve(config.workspace.projectDir);
+  if (!existsSync(entry.dir)) {
+    debug(`Worktree directory ${entry.dir} not found; skipping remove template.`);
+    return;
+  }
+  // Keep the data-loss guard: a dirty worktree is not removed without --force.
+  // Orphan/branch handling is delegated to the template (e.g. `graft rm`),
+  // since groundcrew does not track the scripted clone.
+  if (!options.force) {
+    const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
+    if (dirtiness.kind === "dirty") {
+      throw new Error(
+        describeDirtyWorktree({
+          ticket: entry.ticket,
+          dir: entry.dir,
+          modified: dirtiness.modified,
+          untracked: dirtiness.untracked,
+        }),
+      );
+    }
+  }
+  const command = applySubstitutions(
+    removeTemplate,
+    provisionerSubstitutions(config, {
+      branchName: entry.branchName,
+      dir: entry.dir,
+      ticket: entry.ticket,
+      repository: entry.repository,
+    }),
+  );
+  debug(`Removing worktree ${entry.dir} via remove template...`);
+  await runLongShellCommand(command, projectDir, options.signal);
 }
 
 export type WorktreeDirtiness =
