@@ -848,14 +848,16 @@ function validate(config: ResolvedConfig): void {
 
   requireString(config.workspace.projectDir, "workspace.projectDir");
 
-  if (
-    !Array.isArray(config.workspace.knownRepositories) ||
-    config.workspace.knownRepositories.length === 0
-  ) {
-    fail("workspace.knownRepositories must be a non-empty array");
-  }
-  config.workspace.knownRepositories.forEach((repository, index) => {
-    requireString(repository, `workspace.knownRepositories[${index}]`);
+  const seenRepoNames = new Set<string>();
+  config.workspace.repositories.forEach((recipe, index) => {
+    const label = `workspace.knownRepositories[${index}]`;
+    if (seenRepoNames.has(recipe.repo)) {
+      fail(`${label}.repo "${recipe.repo}" is duplicated; repo names must be unique`);
+    }
+    seenRepoNames.add(recipe.repo);
+    if ((recipe.create === undefined) !== (recipe.remove === undefined)) {
+      fail(`${label} must define both \`create\` and \`remove\` templates, or neither`);
+    }
   });
 
   requirePositiveInt(config.orchestrator.maximumInProgress, "orchestrator.maximumInProgress");

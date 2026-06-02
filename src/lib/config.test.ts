@@ -1119,6 +1119,36 @@ describe("loadConfig", () => {
     );
   });
 
+  it("fails when create is set without remove", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ repo: "billing", create: "graft new x" }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/must define both `create` and `remove`/);
+  });
+
+  it("fails when repo names are duplicated", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: ["billing", { repo: "billing", create: "a", remove: "b" }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/"billing" is duplicated/);
+  });
+
   it("fails when sessionLimitPercentage is out of range", async () => {
     const path = writeConfigFile(
       temporary,
