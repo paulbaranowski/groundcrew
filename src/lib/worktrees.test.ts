@@ -1,3 +1,4 @@
+/* eslint-disable no-template-curly-in-string -- ${branch}-style placeholders appear as literal strings in RepoRecipe create/remove command templates; they're NOT JS template literals */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeOs from "node:os";
 import { tmpdir, userInfo } from "node:os";
@@ -472,6 +473,67 @@ describe(create, () => {
         ticket: "team-1",
       }),
     ).rejects.toThrow(/Could not determine OS username/);
+  });
+
+  it("create runs the create template via sh and skips git fetch/worktree add", async () => {
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockReturnValue("");
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          repo: "billing",
+          create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+          remove: "graft rm ${branch} -f",
+        },
+      ],
+    });
+    const controller = new AbortController();
+
+    const entry = await create(
+      config,
+      { repository: "billing", ticket: "team-220" },
+      controller.signal,
+    );
+
+    expect(entry.dir).toBe(join(projectDir, "billing-team-220"));
+    expect(entry.branchName).toBe("paul-team-220");
+
+    // No git fetch / worktree add — only the sh -c template, with the abort
+    // signal forwarded.
+    const commands = runCommandMock.mock.calls.map((call) => call[0]);
+    expect(commands).not.toContain("git");
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      [
+        "-c",
+        `graft new 'paul-team-220' billing --from 'origin/main' --dir '${join(projectDir, "billing-team-220")}'`,
+      ],
+      expect.objectContaining({ cwd: projectDir, timeoutMs: 0, signal: controller.signal }),
+    );
+  });
+
+  it("streams create template output (stdio inherit) under verbose", async () => {
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockReturnValue("");
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        { repo: "billing", create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+      ],
+    });
+    setVerbose(true);
+
+    await create(config, { repository: "billing", ticket: "team-220" });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      ["-c", "graft new 'paul-team-220'"],
+      expect.objectContaining({ cwd: projectDir, stdio: "inherit", timeoutMs: 0 }),
+    );
   });
 });
 

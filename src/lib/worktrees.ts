@@ -12,8 +12,9 @@ import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 
+import { applySubstitutions } from "./adapters/shell/invoke.ts";
 import { runCommandAsync } from "./commandRunner.ts";
-import type { ResolvedConfig } from "./config.ts";
+import type { RepoRecipe, ResolvedConfig } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
@@ -66,17 +67,67 @@ function branchNameForTicket(ticket: string): string {
   return `${branchPrefix()}-${ticket}`;
 }
 
+// Membership in knownRepositories is enforced by recipeFor (called first in
+// basePaths), so this resolves the clone dir for a repo already known to exist
+// in config and only guards against the clone being absent on disk.
 function repoDirFor(config: ResolvedConfig, repository: string): string {
-  if (!config.workspace.knownRepositories.includes(repository)) {
-    throw new Error(
-      `Repository "${repository}" is not in workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}`,
-    );
-  }
   const repoDir = resolve(config.workspace.projectDir, repository);
   if (!existsSync(repoDir)) {
     throw new Error(`Repository not found: ${repoDir}`);
   }
   return repoDir;
+}
+
+function recipeFor(config: ResolvedConfig, repository: string): RepoRecipe {
+  const recipe = config.workspace.repositories.find((entry) => entry.repo === repository);
+  if (recipe === undefined) {
+    throw new Error(
+      `Repository "${repository}" is not in workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}`,
+    );
+  }
+  return recipe;
+}
+
+function provisionerSubstitutions(
+  config: ResolvedConfig,
+  arguments_: { branchName: string; dir: string; ticket: string; repository: string },
+): Record<string, string> {
+  return {
+    branch: arguments_.branchName,
+    dir: arguments_.dir,
+    baseRef: `${config.git.remote}/${config.git.defaultBranch}`,
+    repo: arguments_.repository,
+    ticket: arguments_.ticket,
+  };
+}
+
+/**
+ * Runs a provisioner template (`create`/`remove`) with no timeout. Mirrors
+ * runLongGitCommand: under --verbose the child streams live; otherwise it is
+ * captured and discarded on success (failures still carry stderr via the
+ * thrown error).
+ */
+async function runLongShellCommand(
+  command: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const signalOption = signal === undefined ? {} : { signal };
+  if (isVerbose()) {
+    await runCommandAsync("sh", ["-c", command], {
+      cwd,
+      stdio: "inherit",
+      timeoutMs: 0,
+      ...signalOption,
+    });
+    return;
+  }
+  await runCommandAsync("sh", ["-c", command], {
+    cwd,
+    stdio: "captured",
+    timeoutMs: 0,
+    ...signalOption,
+  });
 }
 
 interface BasePaths {
@@ -97,7 +148,10 @@ function basePaths(config: ResolvedConfig, repository: string, ticket: string): 
   }
 
   const projectDir = resolve(config.workspace.projectDir);
-  const repoDir = repoDirFor(config, repository);
+  const recipe = recipeFor(config, repository);
+  // Scripted entries have no `<projectDir>/<repo>` clone — graft owns it — so
+  // run templates with cwd = projectDir and never resolve a clone dir.
+  const repoDir = recipe.create === undefined ? repoDirFor(config, repository) : projectDir;
   const hostWorktreeName = `${repository}-${ticket}`;
   const hostWorktreeDir = resolve(projectDir, hostWorktreeName);
 
@@ -159,6 +213,27 @@ async function createWorktree(
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.ticket);
+  const recipe = recipeFor(config, spec.repository);
+  if (recipe.create !== undefined) {
+    const command = applySubstitutions(
+      recipe.create,
+      provisionerSubstitutions(config, {
+        branchName: base.branchName,
+        dir: base.hostWorktreeDir,
+        ticket: spec.ticket,
+        repository: spec.repository,
+      }),
+    );
+    debug(`Provisioning worktree ${spec.repository}-${spec.ticket} via create template...`);
+    await runLongShellCommand(command, base.projectDir, signal);
+    return {
+      repository: spec.repository,
+      ticket: spec.ticket,
+      branchName: base.branchName,
+      dir: base.hostWorktreeDir,
+      kind: "host",
+    };
+  }
   const defaultBranch = await resolveDefaultBranch({
     repoDir: base.repoDir,
     remote: config.git.remote,
