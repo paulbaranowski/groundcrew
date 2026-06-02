@@ -364,18 +364,7 @@ async function removeWorktree(
         }
         removeOrphanWorktreeDirectory(config, entry);
       } else {
-        const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
-        if (dirtiness.kind === "dirty") {
-          throw new Error(
-            describeDirtyWorktree({
-              ticket: entry.ticket,
-              dir: entry.dir,
-              modified: dirtiness.modified,
-              untracked: dirtiness.untracked,
-            }),
-            { cause: error },
-          );
-        }
+        const dirtiness = await throwIfWorktreeDirty(entry, options.signal, error);
         if (dirtiness.kind === "unknown") {
           const registration = await probeWorktreeRegistration({
             repoDir,
@@ -418,17 +407,7 @@ async function removeScriptedWorktree(
   // Orphan/branch handling is delegated to the template (e.g. `graft rm`),
   // since groundcrew does not track the scripted clone.
   if (!options.force) {
-    const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
-    if (dirtiness.kind === "dirty") {
-      throw new Error(
-        describeDirtyWorktree({
-          ticket: entry.ticket,
-          dir: entry.dir,
-          modified: dirtiness.modified,
-          untracked: dirtiness.untracked,
-        }),
-      );
-    }
+    await throwIfWorktreeDirty(entry, options.signal);
   }
   const command = applySubstitutions(
     removeTemplate,
@@ -478,6 +457,29 @@ async function probeWorktreeDirtiness(
     return { kind: "clean" };
   }
   return { kind: "dirty", modified, untracked };
+}
+
+/**
+ * Probe a worktree and, when it has uncommitted work, throw the data-loss guard
+ * error. Returns the dirtiness so the git-native path can still branch on
+ * `unknown`. `cause` chains the underlying git failure when called from a catch.
+ */
+async function throwIfWorktreeDirty(
+  entry: WorktreeEntry,
+  signal: AbortSignal | undefined,
+  cause?: unknown,
+): Promise<WorktreeDirtiness> {
+  const dirtiness = await probeWorktreeDirtiness(entry.dir, signal);
+  if (dirtiness.kind === "dirty") {
+    const message = describeDirtyWorktree({
+      ticket: entry.ticket,
+      dir: entry.dir,
+      modified: dirtiness.modified,
+      untracked: dirtiness.untracked,
+    });
+    throw cause === undefined ? new Error(message) : new Error(message, { cause });
+  }
+  return dirtiness;
 }
 
 function describeDirtyWorktree(arguments_: {
