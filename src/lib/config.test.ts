@@ -1,3 +1,4 @@
+/* eslint-disable no-template-curly-in-string -- ${branch}-style placeholders appear as literal strings in RepoRecipe create/remove command templates; they're NOT JS template literals */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1058,6 +1059,63 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /workspace\.knownRepositories must be a non-empty array/,
+    );
+  });
+
+  it("normalizes string and object knownRepositories entries", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [
+            "owner/simple-repo",
+            {
+              repo: "billing",
+              create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+              remove: "graft rm ${branch} -f",
+            },
+          ],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+
+    expect(config.workspace.knownRepositories).toStrictEqual(["owner/simple-repo", "billing"]);
+    expect(config.workspace.repositories).toStrictEqual([
+      { repo: "owner/simple-repo" },
+      {
+        repo: "billing",
+        create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+        remove: "graft rm ${branch} -f",
+      },
+    ]);
+  });
+
+  it("fails when a knownRepositories entry is neither a string nor an object", async () => {
+    const path = writeConfigFile(
+      temporary,
+      `export default { workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: [5] } };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0] must be a string or an object/,
+    );
+  });
+
+  it("fails when a knownRepositories object entry is missing repo", async () => {
+    const path = writeConfigFile(
+      temporary,
+      `export default { workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: [{ create: "x", remove: "y" }] } };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0]\.repo must be a non-empty string/,
     );
   });
 

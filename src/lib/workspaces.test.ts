@@ -71,6 +71,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ repo: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,

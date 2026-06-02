@@ -96,6 +96,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ repo: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,

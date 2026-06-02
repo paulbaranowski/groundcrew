@@ -61,6 +61,7 @@ function makeConfig(overrides: {
   projectDir: string;
   git?: ResolvedConfig["git"];
   knownRepositories?: string[];
+  repositories?: ResolvedConfig["workspace"]["repositories"];
   models?: ResolvedConfig["models"]["definitions"];
 }): ResolvedConfig {
   const knownRepositories = overrides.knownRepositories ?? ["repo-a"];
@@ -73,6 +74,7 @@ function makeConfig(overrides: {
     workspace: {
       projectDir: overrides.projectDir,
       knownRepositories,
+      repositories: overrides.repositories ?? knownRepositories.map((repo) => ({ repo })),
     },
     orchestrator: {
       maximumInProgress: 4,

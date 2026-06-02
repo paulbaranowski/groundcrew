@@ -20,6 +20,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ repo: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,
