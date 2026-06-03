@@ -70,6 +70,13 @@ describe(sleep, () => {
 });
 
 describe(log, () => {
+  // The 24-hour test pins the clock with fake timers; restore in afterEach so a
+  // failed assertion can't leak fake-timer state into later tests (mirrors the
+  // `describe(sleep)` block above).
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("prefixes the message with a bracketed timestamp", () => {
     const consoleLog = captureConsoleLog();
 
@@ -77,6 +84,17 @@ describe(log, () => {
 
     expect(consoleLog.calls).toHaveLength(1);
     expect(consoleLog.output()).toMatch(/^\[.+] hello world$/);
+    consoleLog.restore();
+  });
+
+  it("renders the timestamp in zero-padded 24-hour time so lines align", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2020, 0, 1, 13, 0, 16));
+    const consoleLog = captureConsoleLog();
+
+    log("hello world");
+
+    expect(consoleLog.output()).toBe("[13:00:16] hello world");
     consoleLog.restore();
   });
 });
