@@ -19,6 +19,22 @@ export default {
     // `<owner>/<repo>` or bare `<repo>` entries; the orchestrator scopes
     // tickets to these and refuses unknown repos by default.
     knownRepositories: ["your-org/your-repo"],
+    // A knownRepositories entry can also be an object that provisions the
+    // worktree with a custom command instead of `git worktree add` — e.g. a
+    // sparse checkout via `graft`. `repo` is a logical name (ticket token +
+    // worktree dir basename); the physical clone is the command's concern.
+    // Templates interpolate ${branch} ${dir} ${baseRef} ${repo} ${ticket}.
+    //
+    //   {
+    //     repo: "billing",
+    //     create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+    //     remove: "graft rm ${branch} -f",
+    //   },
+    //
+    // Set up graft once outside groundcrew:
+    //   graft repo add ~/dev/owner/monorepo
+    //   graft alias add billing services/billing libs/common
+    // `crew doctor` then checks `graft` is on the host PATH.
   },
   // Everything below is optional — defaults shown for reference. Uncomment
   // and edit to override.
