@@ -59,8 +59,10 @@ const userInfoMock = vi.mocked(userInfo);
 
 function makeConfig(overrides: {
   projectDir: string;
+  worktreeDir?: string;
   git?: ResolvedConfig["git"];
   knownRepositories?: string[];
+  repositoryDirs?: Record<string, string>;
   models?: ResolvedConfig["models"]["definitions"];
 }): ResolvedConfig {
   const knownRepositories = overrides.knownRepositories ?? ["repo-a"];
@@ -73,7 +75,11 @@ function makeConfig(overrides: {
     git: overrides.git ?? { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: overrides.projectDir,
+      ...(overrides.worktreeDir === undefined ? {} : { worktreeDir: overrides.worktreeDir }),
       knownRepositories,
+      ...(overrides.repositoryDirs === undefined
+        ? {}
+        : { repositoryDirs: overrides.repositoryDirs }),
     },
     orchestrator: {
       maximumInProgress: 4,
@@ -1357,5 +1363,97 @@ describe("worktrees.probeWorkingTree", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("multi-directory worktrees", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), "groundcrew-multi-dir-"));
+    vi.stubEnv("XDG_STATE_HOME", path.join(root, "state"));
+    runCommandMock.mockReset();
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/main\n";
+      }
+      return "";
+    });
+    userInfoMock.mockReturnValue(makeUserInfo("tester"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  function findAddCall(): readonly string[] | undefined {
+    return runCommandMock.mock.calls.find((call) => call[1].includes("add"))?.[1];
+  }
+
+  it("creates a worktree under worktreeDir, not the repo's dir", async () => {
+    const projectsDir = path.join(root, "projects");
+    const worktreeDir = path.join(root, "worktrees");
+    mkdirSync(path.join(projectsDir, "owner", "repo"), { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    const config = makeConfig({
+      projectDir: projectsDir,
+      worktreeDir,
+      knownRepositories: ["owner/repo"],
+    });
+
+    const entry = await create(config, { repository: "owner/repo", ticket: "team-1" });
+
+    expect(entry.dir).toBe(path.join(worktreeDir, "owner", "repo-team-1"));
+    const addArguments = findAddCall();
+    expect(addArguments).toStrictEqual(
+      expect.arrayContaining(["-C", path.join(projectsDir, "owner", "repo")]),
+    );
+    expect(addArguments).toContain(path.join(worktreeDir, "owner", "repo-team-1"));
+  });
+
+  it("locates a repo via its per-repo dir override", async () => {
+    const projectsDir = path.join(root, "projects");
+    const other = path.join(root, "elsewhere");
+    const worktreeDir = path.join(root, "worktrees");
+    mkdirSync(path.join(other, "owner", "repo"), { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    const config = makeConfig({
+      projectDir: projectsDir,
+      worktreeDir,
+      knownRepositories: ["owner/repo"],
+      repositoryDirs: { "owner/repo": other },
+    });
+
+    await create(config, { repository: "owner/repo", ticket: "team-2" });
+
+    expect(findAddCall()).toStrictEqual(
+      expect.arrayContaining(["-C", path.join(other, "owner", "repo")]),
+    );
+  });
+
+  it("lists worktrees from worktreeDir regardless of repo location", () => {
+    const projectsDir = path.join(root, "projects");
+    const other = path.join(root, "elsewhere");
+    const worktreeDir = path.join(root, "worktrees");
+    mkdirSync(path.join(other, "owner", "repo"), { recursive: true });
+    mkdirSync(path.join(worktreeDir, "owner", "repo-team-3"), { recursive: true });
+    const config = makeConfig({
+      projectDir: projectsDir,
+      worktreeDir,
+      knownRepositories: ["owner/repo"],
+      repositoryDirs: { "owner/repo": other },
+    });
+
+    const entries = list(config);
+
+    expect(entries).toStrictEqual([
+      expect.objectContaining({
+        repository: "owner/repo",
+        ticket: "team-3",
+        dir: path.join(worktreeDir, "owner", "repo-team-3"),
+      }),
+    ]);
   });
 });
