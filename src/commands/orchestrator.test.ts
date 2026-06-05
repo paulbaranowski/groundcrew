@@ -98,6 +98,12 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a", "repo-b", "api", "api-admin"],
+      repositories: [
+        { repo: "repo-a" },
+        { repo: "repo-b" },
+        { repo: "api" },
+        { repo: "api-admin" },
+      ],
       ...overrides.workspace,
     },
     orchestrator: {

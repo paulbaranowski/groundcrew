@@ -48,6 +48,12 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a", "repo-b", "api", "api-admin"],
+      repositories: [
+        { repo: "repo-a" },
+        { repo: "repo-b" },
+        { repo: "api" },
+        { repo: "api-admin" },
+      ],
       ...overrides.workspace,
     },
     orchestrator: {
@@ -642,7 +648,11 @@ describe(resolveRepositoryFor, () => {
 
   it("canonicalizes a bare repo mention to the full owner/repo entry from config", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/api"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/api"],
+        repositories: [{ repo: "acme/api" }],
+      },
     });
     expect(resolveRepositoryFor({ description: "api is sad", config })).toStrictEqual({
       kind: "ok",
@@ -652,7 +662,11 @@ describe(resolveRepositoryFor, () => {
 
   it("returns missing when a bare repo mention matches multiple configured repos", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/api", "beta/api"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/api", "beta/api"],
+        repositories: [{ repo: "acme/api" }, { repo: "beta/api" }],
+      },
     });
     expect(resolveRepositoryFor({ description: "api is sad", config })).toStrictEqual({
       kind: "missing",

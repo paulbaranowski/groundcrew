@@ -22,6 +22,38 @@ git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
 
 Bare-name entries have no owner, so pick the remote URL yourself and clone to `$PROJECT_DIR/<name>`.
 
+## Scripted Worktrees (Sparse Checkouts)
+
+A `workspace.knownRepositories` entry can be an **object** instead of a string when you want groundcrew to provision the worktree with a custom command — for example a sparse checkout via `graft` — instead of `git worktree add`:
+
+```ts
+workspace: {
+  projectDir: "~/dev/groundcrew",
+  knownRepositories: [
+    "your-org/your-repo",
+    {
+      repo: "billing",
+      create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+      remove: "graft rm ${branch} -f",
+    },
+  ],
+},
+```
+
+- **`repo`** is a logical name — it is the token matched in ticket descriptions and the basename of the per-ticket worktree directory. The physical clone is the command's concern, so several scripted entries can share one underlying clone.
+- **`create`** runs in place of `git worktree add`; **`remove`** runs in place of `git worktree remove`. You must define **both or neither** — a half-scripted entry is rejected at config load.
+- Both templates run on the host via `sh -c` with the working directory set to `workspace.projectDir`. They interpolate `${branch}`, `${dir}`, `${baseRef}` (`<remote>/<defaultBranch>`), `${repo}`, and `${ticket}`; each value is shell-quoted.
+- A dirty scripted worktree is still protected from data loss: `crew cleanup` refuses to run `remove` unless you pass `--force`. Orphan and branch cleanup are delegated to your `remove` template, since groundcrew does not track the scripted clone.
+
+Set `graft` (or whatever tool your templates call) up once, outside groundcrew:
+
+```bash
+graft repo add ~/dev/owner/monorepo
+graft alias add billing services/billing libs/common
+```
+
+`crew doctor` then verifies the first token of each `create` template (e.g. `graft`) is on the host PATH.
+
 ## Config Discovery
 
 Resolution order:

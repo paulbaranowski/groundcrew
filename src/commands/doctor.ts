@@ -147,6 +147,22 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
+/** First whitespace-delimited token of each distinct `create` template. */
+function provisionerBinaries(config: ResolvedConfig): string[] {
+  const binaries = new Set<string>();
+  for (const recipe of config.workspace.repositories) {
+    if (recipe.create === undefined) {
+      continue;
+    }
+    const [binary] = recipe.create.trim().split(/\s+/);
+    /* v8 ignore next @preserve -- config normalization guarantees `create` is a trimmed, non-empty string, so the first token is always present and non-empty */
+    if (binary !== undefined && binary.length > 0) {
+      binaries.add(binary);
+    }
+  }
+  return [...binaries];
+}
+
 function modelCliHint(modelName: string, token: string): string | undefined {
   if (token !== modelName) {
     return undefined;
@@ -222,6 +238,13 @@ export async function doctor(): Promise<boolean> {
     // oxlint-disable-next-line no-await-in-loop -- doctor reports tools in deterministic order
     const check = await checkCmd(token, required, required ? hint : "required for local runs");
     checks.push(check);
+  }
+
+  for (const binary of provisionerBinaries(config)) {
+    checks.push(
+      // oxlint-disable-next-line no-await-in-loop -- sequential PATH probes mirror the existing tool-check loop
+      await checkCmd(binary, true, "required by a workspace.knownRepositories create template"),
+    );
   }
 
   const usageGatedModels = gatedModels(config);

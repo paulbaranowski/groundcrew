@@ -156,6 +156,22 @@ type UserModelDefinition = EnabledUserModelDefinition;
  * configuration — Linear's workflow `state.type` is the source of truth
  * for todo / in-progress / terminal classification.
  */
+/**
+ * A configured repository. A bare string is shorthand for `{ repo }`. When
+ * `create`/`remove` templates are present (a *scripted* entry), groundcrew runs
+ * them via `sh -c` (cwd = `workspace.projectDir`) in place of
+ * `git worktree add`/`remove`; the `repo` value is then a logical name and the
+ * physical clone is the template's concern (e.g. graft's own registry).
+ */
+export interface RepoRecipe {
+  /** Logical repo name: the token tickets reference and the worktree dir basename. */
+  repo: string;
+  /** Shell template run in place of `git worktree add`. Requires `remove`. */
+  create?: string;
+  /** Shell template run in place of `git worktree remove`. Requires `create`. */
+  remove?: string;
+}
+
 export interface Config {
   /**
    * Additional pluggable ticket sources beyond the built-in Linear adapter
@@ -180,7 +196,7 @@ export interface Config {
   };
   workspace: {
     projectDir: string;
-    knownRepositories: string[];
+    knownRepositories: (string | RepoRecipe)[];
   };
   defaults?: {
     hooks?: HookCommands;
@@ -246,7 +262,10 @@ export interface ResolvedConfig {
   };
   workspace: {
     projectDir: string;
+    /** Repo names (each recipe's `repo`). Derived; what name-matching consumers read. */
     knownRepositories: string[];
+    /** Normalized entries carrying any provisioner templates. */
+    repositories: RepoRecipe[];
   };
   defaults: {
     hooks: HookCommands;
@@ -824,10 +843,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       ...user.git,
       ...(branchPrefix === undefined ? {} : { branchPrefix }),
     },
-    workspace: {
-      projectDir: expandHome(user.workspace.projectDir),
-      knownRepositories: user.workspace.knownRepositories,
-    },
+    workspace: normalizeWorkspace(user.workspace),
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
     models: {
@@ -849,6 +865,42 @@ function applyDefaults(user: Config): ResolvedConfig {
   };
 }
 
+function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["workspace"] {
+  const entries = workspace.knownRepositories;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    fail("workspace.knownRepositories must be a non-empty array");
+  }
+  const repositories = entries.map((entry, index) =>
+    normalizeRepoEntry(entry, `workspace.knownRepositories[${index}]`),
+  );
+  return {
+    projectDir: expandHome(workspace.projectDir),
+    knownRepositories: repositories.map((recipe) => recipe.repo),
+    repositories,
+  };
+}
+
+function normalizeRepoEntry(entry: unknown, label: string): RepoRecipe {
+  if (typeof entry === "string") {
+    requireString(entry, label);
+    return { repo: entry };
+  }
+  if (!isPlainObject(entry)) {
+    fail(`${label} must be a string or an object`);
+  }
+  requireString(entry["repo"], `${label}.repo`);
+  const recipe: RepoRecipe = { repo: entry["repo"] };
+  const create = normalizeOptionalString(entry["create"], `${label}.create`);
+  if (create !== undefined) {
+    recipe.create = create;
+  }
+  const remove = normalizeOptionalString(entry["remove"], `${label}.remove`);
+  if (remove !== undefined) {
+    recipe.remove = remove;
+  }
+  return recipe;
+}
+
 function validatePromptPlaceholders(template: string): void {
   /* v8 ignore next @preserve -- a no-placeholder prompt is unusual but tests with placeholders consistently match at least once */
   const placeholders = template.match(PROMPT_PLACEHOLDER_RE) ?? [];
@@ -866,14 +918,16 @@ function validate(config: ResolvedConfig): void {
 
   requireString(config.workspace.projectDir, "workspace.projectDir");
 
-  if (
-    !Array.isArray(config.workspace.knownRepositories) ||
-    config.workspace.knownRepositories.length === 0
-  ) {
-    fail("workspace.knownRepositories must be a non-empty array");
-  }
-  config.workspace.knownRepositories.forEach((repository, index) => {
-    requireString(repository, `workspace.knownRepositories[${index}]`);
+  const seenRepoNames = new Set<string>();
+  config.workspace.repositories.forEach((recipe, index) => {
+    const label = `workspace.knownRepositories[${index}]`;
+    if (seenRepoNames.has(recipe.repo)) {
+      fail(`${label}.repo "${recipe.repo}" is duplicated; repo names must be unique`);
+    }
+    seenRepoNames.add(recipe.repo);
+    if ((recipe.create === undefined) !== (recipe.remove === undefined)) {
+      fail(`${label} must define both \`create\` and \`remove\` templates, or neither`);
+    }
   });
 
   requirePositiveInt(config.orchestrator.maximumInProgress, "orchestrator.maximumInProgress");

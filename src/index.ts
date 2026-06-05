@@ -13,6 +13,7 @@ export type {
   Config,
   HookCommands,
   ModelDefinition,
+  RepoRecipe,
   ResolvedConfig,
   SourceConfig,
 } from "./lib/config.ts";
