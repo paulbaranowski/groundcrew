@@ -859,6 +859,7 @@ function normalizeKnownRepository(
  */
 function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["workspace"] {
   requireObject(workspace, "workspace");
+  requireString(workspace.projectDir, "workspace.projectDir");
   const names: string[] = [];
   const repositoryDirs: Record<string, string> = {};
   const entries = Array.isArray(workspace.knownRepositories) ? workspace.knownRepositories : [];

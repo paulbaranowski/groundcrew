@@ -1269,6 +1269,21 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0].name");
   });
 
+  it("rejects a non-string projectDir with a clean config error", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: 5, knownRepositories: ["owner/flat"] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.projectDir must be a non-empty string");
+  });
+
   it("rejects a worktreeDir that is not a string", async () => {
     const configPath = writeConfigFile(
       temporary,
