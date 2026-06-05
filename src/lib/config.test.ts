@@ -1239,6 +1239,21 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0].dir");
   });
 
+  it("rejects a knownRepositories entry that is neither a string nor an object", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", knownRepositories: [42] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0] must be an object");
+  });
+
   it("rejects a knownRepositories object entry with a non-string name", async () => {
     const configPath = writeConfigFile(
       temporary,

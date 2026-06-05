@@ -1456,4 +1456,60 @@ describe("multi-directory worktrees", () => {
       }),
     ]);
   });
+
+  it("force-removes an orphan worktree under worktreeDir, probing the override repo dir", async () => {
+    const projectsDir = path.join(root, "projects");
+    const other = path.join(root, "elsewhere");
+    const worktreeDir = path.join(root, "worktrees");
+    const repoDir = path.join(other, "owner", "repo");
+    const orphanDir = path.join(worktreeDir, "owner", "repo-team-4");
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(orphanDir, { recursive: true });
+    writeFileSync(path.join(orphanDir, "leftover.log"), "leftover");
+    const config = makeConfig({
+      projectDir: projectsDir,
+      worktreeDir,
+      knownRepositories: ["owner/repo"],
+      repositoryDirs: { "owner/repo": other },
+    });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- forced worktree remove fails after Git has already deregistered the path.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("fatal: is not a working tree");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the override repo no longer lists the orphaned worktree path.
+      if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
+        return `worktree ${repoDir}\nHEAD abc123\nbranch refs/heads/main\n`;
+      }
+      return "";
+    });
+
+    await remove(
+      config,
+      {
+        repository: "owner/repo",
+        ticket: "team-4",
+        branchName: "tester-team-4",
+        dir: orphanDir,
+        kind: "host",
+      },
+      { force: true },
+    );
+
+    expect(existsSync(orphanDir)).toBe(false);
+    // The registration probe and branch deletion both run against the override repo dir.
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", repoDir, "worktree", "list", "--porcelain"],
+      {},
+    );
+    expect(runCommandMock).toHaveBeenCalledWith("git", [
+      "-C",
+      repoDir,
+      "branch",
+      "-D",
+      "tester-team-4",
+    ]);
+  });
 });
