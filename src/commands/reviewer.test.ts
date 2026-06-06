@@ -71,7 +71,7 @@ describe(createReviewer, () => {
     vi.clearAllMocks();
   });
 
-  it("does nothing when no issue is in-progress", async () => {
+  it("does nothing when there are no in-progress or in-review candidates", async () => {
     const findPullRequests = findReturning([pullRequest()]);
     const reviewer = createReviewer({ board, findPullRequests });
 
@@ -273,7 +273,31 @@ describe(createReviewer, () => {
     expect(out).toContain("Advanced team-2 to in-review");
   });
 
-  it("never looks up PRs for a non-in-progress ticket even if it has a worktree", async () => {
+  it("keeps advancing other merged tickets when one issue's markDone fails", async () => {
+    // Error isolation on the done path: a markDone failure on the first merged
+    // ticket must not prevent the second merged ticket from advancing this tick.
+    markDoneMock
+      .mockRejectedValueOnce(new Error("team-1 shell error"))
+      .mockResolvedValueOnce({ outcome: "applied" });
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1"), inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(markDoneMock).toHaveBeenCalledTimes(2);
+    expect(markInReviewMock).not.toHaveBeenCalled();
+    const out = consoleLog.output();
+    expect(out).toContain("Failed to advance team-1 to done");
+    expect(out).toContain("Advanced team-2 to done");
+  });
+
+  it("never looks up PRs for a todo ticket even if it has a worktree", async () => {
     const findPullRequests = findReturning([pullRequest({ state: "open" })]);
     const reviewer = createReviewer({ board, findPullRequests });
 

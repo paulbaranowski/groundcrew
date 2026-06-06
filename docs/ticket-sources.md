@@ -18,7 +18,7 @@ export default {
         markInReview: "jira issue move ${id} 'In Review'",
         markDone: "jira issue move ${id} 'Done'",
       },
-      timeouts: { fetch: 60_000, markInReview: 15_000 },
+      timeouts: { fetch: 60_000, markInReview: 15_000, markDone: 15_000 },
     },
   ],
 };
