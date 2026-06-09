@@ -449,16 +449,15 @@ async function removeScriptedWorktree(
   options: { force: boolean; signal?: AbortSignal },
 ): Promise<void> {
   const worktreeRoot = path.resolve(worktreeBaseDir(config));
-  if (!existsSync(entry.dir)) {
-    debug(`Worktree directory ${entry.dir} not found; skipping remove template.`);
-    return;
-  }
-  // Keep the data-loss guard: a dirty worktree is not removed without --force.
-  // Orphan/branch handling is delegated to the template (e.g. `graft rm`),
-  // since groundcrew does not track the scripted clone.
-  if (!options.force) {
-    // Fail closed: if the dirtiness probe can't confirm the worktree is clean,
-    // do not let the remove template run — that would bypass the data-loss guard.
+  // A scripted worktree's teardown lives in the remove template (e.g. `graft rm`),
+  // which owns provisioner-side branch/metadata beyond the checkout dir. Run it
+  // even when the dir is already gone so that state is still cleaned up; only the
+  // dirtiness guard — which needs the dir to inspect — is skipped in that case.
+  const worktreeExists = existsSync(entry.dir);
+  if (worktreeExists && !options.force) {
+    // Keep the data-loss guard: a dirty worktree is not removed without --force.
+    // Fail closed when the dirtiness probe can't confirm the worktree is clean,
+    // so the remove template never runs over uncommitted work.
     const dirtiness = await throwIfWorktreeDirty(entry, options.signal);
     if (dirtiness.kind !== "clean") {
       throw new Error(

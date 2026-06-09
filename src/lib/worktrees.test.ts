@@ -886,7 +886,7 @@ describe(remove, () => {
     expect(runCommandMock).not.toHaveBeenCalledWith("sh", expect.anything(), expect.anything());
   });
 
-  it("remove skips the template when the scripted worktree directory is absent", async () => {
+  it("remove runs the template for provisioner cleanup when the worktree directory is absent", async () => {
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
     runCommandMock.mockReturnValue("");
 
@@ -909,8 +909,15 @@ describe(remove, () => {
       kind: "host",
     });
 
-    // No template (and no git) runs for a worktree that is already gone.
-    expect(runCommandMock).not.toHaveBeenCalled();
+    // The remove template still runs (graft owns branch/metadata cleanup beyond
+    // the checkout dir), but the dirtiness probe (git) is skipped — there is no
+    // dir to inspect.
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      ["-c", "graft rm 'paul-team-220' -f"],
+      expect.objectContaining({ cwd: projectDir, timeoutMs: 0 }),
+    );
+    expect(runCommandMock).not.toHaveBeenCalledWith("git", expect.anything(), expect.anything());
   });
 
   it("remove with --force runs the template without a dirtiness probe", async () => {
