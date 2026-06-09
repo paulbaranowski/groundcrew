@@ -44,6 +44,13 @@ export type ShellIssue = z.infer<typeof shellIssueSchema>;
 
 export const shellFetchOutputSchema = z.array(shellIssueSchema);
 
+/**
+ * Shape a `commands.validate` script must emit on stdout: a JSON array of
+ * human-readable error strings. An empty array (or empty stdout, handled by
+ * the factory) means "no problems found".
+ */
+export const shellValidateOutputSchema = z.array(z.string());
+
 export const shellAdapterConfigSchema = z.object({
   kind: z.literal("shell"),
   name: z
@@ -63,6 +70,19 @@ export const shellAdapterConfigSchema = z.object({
       markInProgress: z.string().optional(),
       markInReview: z.string().optional(),
       markDone: z.string().optional(),
+      /**
+       * Create a task from a `CreateTaskInput`. Receives the input fields as
+       * shell-quoted `${...}` placeholders (see factory) and must print one
+       * ShellIssue JSON on stdout. Omitting it leaves the source unable to
+       * create tasks.
+       */
+      createTask: z.string().optional(),
+      /**
+       * Validate task content. Must print a JSON array of error strings on
+       * stdout (empty array / empty stdout = no problems). Omitting it leaves
+       * the source unable to validate.
+       */
+      validate: z.string().optional(),
     })
     .superRefine((commands, ctx) => {
       if (commands.listTasks === undefined && commands.fetch === undefined) {
@@ -90,6 +110,10 @@ export const shellAdapterConfigSchema = z.object({
       markInProgress: z.number().int().positive().optional(),
       markInReview: z.number().int().positive().optional(),
       markDone: z.number().int().positive().optional(),
+      /** Timeout for the createTask command. */
+      createTask: z.number().int().positive().optional(),
+      /** Timeout for the validate command. */
+      validate: z.number().int().positive().optional(),
     })
     .optional(),
   env: z.record(z.string(), z.string()).optional(),

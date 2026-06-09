@@ -1,7 +1,7 @@
 /**
  * Shell-adapter `TaskSource` factory. Wires `invokeShellCommand` to the
- * four TaskSource operations and applies the ShellIssue Zod schema for
- * runtime validation of script stdout.
+ * TaskSource operations and applies the ShellIssue Zod schema for runtime
+ * validation of script stdout.
  *
  * Fallback behavior for omitted commands:
  *  - `verify` absent → no-op (always succeeds).
@@ -13,11 +13,16 @@
  *  - `markInProgress` absent → silent no-op.
  *  - `markInReview` absent → reports unsupported.
  *  - `markDone` absent → reports unsupported.
+ *  - `createTask` absent → method omitted entirely (source reports it cannot
+ *    create tasks; the optional method is attached only when configured).
+ *  - `validate` absent → method omitted entirely (same capability-detection
+ *    contract as createTask).
  *  - `fetch` is required by the Zod schema.
  */
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import {
+  type CreateTaskInput,
   toCanonicalId,
   type Blocker as CanonicalBlocker,
   type Issue as CanonicalIssue,
@@ -25,7 +30,7 @@ import {
   type MarkInReviewResult,
   type TaskSource,
 } from "../../taskSource.ts";
-import { writeError } from "../../util.ts";
+import { errorMessage, writeError } from "../../util.ts";
 
 import { invokeShellCommand } from "./invoke.ts";
 import {
@@ -33,6 +38,7 @@ import {
   shellFetchOutputSchema,
   type ShellIssue,
   shellIssueSchema,
+  shellValidateOutputSchema,
 } from "./schema.ts";
 
 interface ResolvedShellTimeouts {
@@ -42,6 +48,8 @@ interface ResolvedShellTimeouts {
   markInProgress: number;
   markInReview: number;
   markDone: number;
+  createTask: number;
+  validate: number;
 }
 
 const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
@@ -51,16 +59,21 @@ const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
   markInProgress: 10_000,
   markInReview: 10_000,
   markDone: 10_000,
+  createTask: 30_000,
+  validate: 30_000,
 };
 
 function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShellTimeouts {
+  const o = overrides ?? {};
   return {
-    verify: overrides?.verify ?? DEFAULT_TIMEOUTS.verify,
-    listTasks: overrides?.listTasks ?? overrides?.fetch ?? DEFAULT_TIMEOUTS.listTasks,
-    getTask: overrides?.getTask ?? overrides?.resolveOne ?? DEFAULT_TIMEOUTS.getTask,
-    markInProgress: overrides?.markInProgress ?? DEFAULT_TIMEOUTS.markInProgress,
-    markInReview: overrides?.markInReview ?? DEFAULT_TIMEOUTS.markInReview,
-    markDone: overrides?.markDone ?? DEFAULT_TIMEOUTS.markDone,
+    verify: o.verify ?? DEFAULT_TIMEOUTS.verify,
+    listTasks: o.listTasks ?? o.fetch ?? DEFAULT_TIMEOUTS.listTasks,
+    getTask: o.getTask ?? o.resolveOne ?? DEFAULT_TIMEOUTS.getTask,
+    markInProgress: o.markInProgress ?? DEFAULT_TIMEOUTS.markInProgress,
+    markInReview: o.markInReview ?? DEFAULT_TIMEOUTS.markInReview,
+    markDone: o.markDone ?? DEFAULT_TIMEOUTS.markDone,
+    createTask: o.createTask ?? DEFAULT_TIMEOUTS.createTask,
+    validate: o.validate ?? DEFAULT_TIMEOUTS.validate,
   };
 }
 
@@ -121,6 +134,31 @@ export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): Ca
     hasMoreBlockers: shellIssue.hasMoreBlockers,
     ...(shellIssue.url === undefined ? {} : { url: shellIssue.url }),
     sourceRef: shellIssue.sourceRef,
+  };
+}
+
+/**
+ * Flatten a CreateTaskInput into the `${...}` substitution map the createTask
+ * script receives. Every key is always present — absent optionals become an
+ * empty string — so no placeholder is ever left literally in the command.
+ * List fields are comma-joined into a single value.
+ */
+function createTaskSubstitutions(input: CreateTaskInput): Record<string, string> {
+  return {
+    title: input.title,
+    agent: input.agent,
+    repo: input.repository ?? "",
+    team: input.team ?? "",
+    id: input.id ?? "",
+    priority: input.priority ?? "",
+    due: input.due ?? "",
+    recurrence: input.recurrence ?? "",
+    promptFile: input.promptFile ?? "",
+    description: input.description ?? "",
+    edit: input.edit ? "true" : "",
+    projects: input.projects.join(","),
+    contexts: input.contexts.join(","),
+    dependencies: input.dependencies.join(","),
   };
 }
 
@@ -199,7 +237,7 @@ export function createShellTaskSource(
     });
   }
 
-  return {
+  const source: TaskSource = {
     name: sourceName,
     async verify(): Promise<void> {
       const verifyCommand = config.commands.verify;
@@ -248,4 +286,72 @@ export function createShellTaskSource(
       return { outcome: "applied" };
     },
   };
+
+  // createTask / validate are attached only when their command is configured.
+  // Capability detection keys off `source.createTask === undefined` /
+  // `source.validate === undefined`, so a slot left unset must leave the
+  // method genuinely absent rather than present-but-failing.
+  const createTaskCommand = config.commands.createTask;
+  if (createTaskCommand !== undefined) {
+    source.createTask = async (input: CreateTaskInput): Promise<CanonicalIssue> => {
+      const { stdout, exitCode } = await invokeShellCommand({
+        command: createTaskCommand,
+        timeoutMs: timeouts.createTask,
+        cwd: config.cwd,
+        env: config.env,
+        substitutions: createTaskSubstitutions(input),
+        sourceName,
+      });
+      // invokeShellCommand resolves (does not throw) on exit 3 — its "not
+      // found" sentinel for lookups. Creation has no not-found concept, so any
+      // nonzero exit is a failure: surface it rather than parse partial output.
+      if (exitCode === 3) {
+        throw new Error(
+          `shell source "${sourceName}" createTask command exited 3 (not-found); task creation cannot signal not-found`,
+        );
+      }
+      const trimmed = stdout.trim();
+      if (trimmed.length === 0) {
+        throw new Error(
+          `shell source "${sourceName}" createTask command produced no output (expected one ShellIssue JSON)`,
+        );
+      }
+      const parsed = shellIssueSchema.parse(JSON.parse(trimmed));
+      return toCanonicalIssue(parsed, sourceName);
+    };
+  }
+
+  const validateCommand = config.commands.validate;
+  if (validateCommand !== undefined) {
+    source.validate = async (): Promise<string[]> => {
+      try {
+        const { stdout, exitCode } = await invokeShellCommand({
+          command: validateCommand,
+          timeoutMs: timeouts.validate,
+          cwd: config.cwd,
+          env: config.env,
+          sourceName,
+        });
+        // exit 3 is invoke's lookup "not found" sentinel; for validation it is
+        // not a meaningful success, so surface it as a failure (and validate
+        // never throws — return the failure as an error string).
+        if (exitCode === 3) {
+          return [
+            `shell source "${sourceName}" validate command exited 3 (not-found); treating as a validation failure`,
+          ];
+        }
+        const trimmed = stdout.trim();
+        if (trimmed.length === 0) {
+          return [];
+        }
+        return shellValidateOutputSchema.parse(JSON.parse(trimmed));
+      } catch (error) {
+        // Contract: validate() never throws — fold a nonzero exit, timeout,
+        // malformed JSON, or wrong-shape payload into a single error string.
+        return [`shell source "${sourceName}" validate command failed: ${errorMessage(error)}`];
+      }
+    };
+  }
+
+  return source;
 }
