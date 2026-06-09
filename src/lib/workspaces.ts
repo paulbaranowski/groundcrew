@@ -1,16 +1,14 @@
 /**
  * Workspace facade — opens/lists/closes the host-side terminal session
  * that runs an agent for one task. `Workspace.name` is the task id;
- * callers key on it. The cmux and tmux backends live in their own files
- * (`cmuxAdapter.ts`, `tmuxAdapter.ts`) behind the shared `Adapter`
- * interface in `workspaceAdapter.ts`; this module resolves which one to
- * use, caches it per config, and exposes the `workspaces` API.
+ * callers key on it. Backend implementations live in their own files behind
+ * the shared `Adapter` interface in `workspaceAdapter.ts`; this module
+ * resolves and lazy-loads the selected one, caches it per config, and exposes
+ * the `workspaces` API.
  */
 
-import { cmuxAdapter } from "./cmuxAdapter.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { tmuxAdapter } from "./tmuxAdapter.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -49,7 +47,7 @@ export function resolveWorkspaceKind(arguments_: ResolveArguments): WorkspaceRes
   const { config, host } = arguments_;
   const requested = config.workspaceKind;
 
-  if (requested === "cmux" || requested === "tmux") {
+  if (requested !== "auto") {
     failIfBinaryUnavailable(requested, host);
     return { requested, resolved: requested, reason: `workspaceKind set to ${requested}` };
   }
@@ -77,9 +75,25 @@ function resolveAuto(arguments_: {
   );
 }
 
-const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux"> = {
+const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux" | "hasZellij"> = {
   cmux: "hasCmux",
   tmux: "hasTmux",
+  zellij: "hasZellij",
+};
+
+const ADAPTER_LOADER_BY_KIND: Record<WorkspaceKind, () => Promise<Adapter>> = {
+  cmux: async () => {
+    const { cmuxAdapter } = await import("./cmuxAdapter.ts");
+    return cmuxAdapter;
+  },
+  tmux: async () => {
+    const { tmuxAdapter } = await import("./tmuxAdapter.ts");
+    return tmuxAdapter;
+  },
+  zellij: async () => {
+    const { zellijAdapter } = await import("./zellijAdapter.ts");
+    return zellijAdapter;
+  },
 };
 
 function failIfBinaryUnavailable(kind: WorkspaceKind, host: HostCapabilities): void {
@@ -104,7 +118,7 @@ async function adapterFor(config: ResolvedConfig, signal?: AbortSignal): Promise
     config,
     host: await detectHostCapabilities(signal),
   });
-  const adapter = resolved === "cmux" ? cmuxAdapter : tmuxAdapter;
+  const adapter = await ADAPTER_LOADER_BY_KIND[resolved]();
   adapterCache.set(config, adapter);
   return adapter;
 }
