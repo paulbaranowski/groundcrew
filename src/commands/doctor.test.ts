@@ -111,6 +111,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,
@@ -359,7 +360,12 @@ describe(doctor, () => {
   it("reports a failing worktreeDir check when worktreeDir is configured but missing", async () => {
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      workspace: { projectDir: "/work", worktreeDir: "/wt", knownRepositories: ["repo-a"] },
+      workspace: {
+        projectDir: "/work",
+        worktreeDir: "/wt",
+        knownRepositories: ["repo-a"],
+        repositories: [{ name: "repo-a" }],
+      },
     });
     mockMissingPath("/wt");
 
