@@ -33,7 +33,11 @@ function makeConfig(): ResolvedConfig {
     sources: [],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
-    workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
+    },
     orchestrator: {
       maximumInProgress: 4,
       pollIntervalMilliseconds: 1000,
@@ -77,6 +81,15 @@ const SHELL_RAW_FULL = {
     markInProgress: "jira move ${id} 'In Progress'",
     markInReview: "jira move ${id} 'In Review'",
     markDone: "jira move ${id} 'Done'",
+  },
+};
+const SHELL_RAW_CREATE_VALIDATE = {
+  kind: "shell",
+  name: "plans",
+  commands: {
+    fetch: "./fetch.sh",
+    createTask: "./create.sh ${title}",
+    validate: "./validate.sh",
   },
 };
 
@@ -174,6 +187,21 @@ describe("crew source list", () => {
     expect(output).toContain('"createTask": false');
     expect(output).toContain('"markDone": false');
     expect(output).toContain('"validate": false');
+  });
+
+  it("reports shell createTask and validate capabilities when configured", async () => {
+    sourcesFromConfigMock.mockReturnValue([SHELL_RAW_CREATE_VALIDATE]);
+    const log = captureConsoleLog();
+    try {
+      await sourceCli(["list", "--json"]);
+    } finally {
+      log.restore();
+    }
+
+    const output = log.output();
+    expect(output).toContain('"name": "plans"');
+    expect(output).toContain('"createTask": true');
+    expect(output).toContain('"validate": true');
   });
 
   it("shows todo-txt source with full capabilities", async () => {

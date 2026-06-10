@@ -51,11 +51,11 @@ function shellCapabilities(raw: unknown): SourceCapabilities {
     verify: commands.verify !== undefined,
     listTasks: true,
     getTask: true,
-    createTask: false,
+    createTask: commands.createTask !== undefined,
     markInProgress: commands.markInProgress !== undefined,
     markInReview: commands.markInReview !== undefined,
     markDone: commands.markDone !== undefined,
-    validate: false,
+    validate: commands.validate !== undefined,
   };
 }
 

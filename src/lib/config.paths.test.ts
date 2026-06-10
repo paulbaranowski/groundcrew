@@ -1,10 +1,17 @@
 import { repositoryBaseDir, worktreeBaseDir, type ResolvedConfig } from "./config.ts";
 
-function resolvedConfigWithWorkspace(workspace: ResolvedConfig["workspace"]): ResolvedConfig {
+function resolvedConfigWithWorkspace(
+  workspace: Omit<ResolvedConfig["workspace"], "repositories"> & {
+    repositories?: ResolvedConfig["workspace"]["repositories"];
+  },
+): ResolvedConfig {
   return {
     sources: [],
     git: { remote: "origin", defaultBranch: "main" },
-    workspace,
+    workspace: {
+      ...workspace,
+      repositories: workspace.repositories ?? workspace.knownRepositories.map((name) => ({ name })),
+    },
     defaults: { hooks: {} },
     orchestrator: {
       maximumInProgress: 4,

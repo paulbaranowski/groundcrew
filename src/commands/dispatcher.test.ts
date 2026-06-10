@@ -39,6 +39,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a", "repo-b"],
+      repositories: [{ name: "repo-a" }, { name: "repo-b" }],
       ...overrides.workspace,
     },
     orchestrator: {
@@ -111,6 +112,10 @@ describe(createDispatcher, () => {
     consoleLog.restore();
     setVerbose(false);
     vi.clearAllMocks();
+  });
+
+  afterAll(() => {
+    vi.restoreAllMocks();
   });
 
   describe("slot math", () => {
@@ -342,7 +347,9 @@ describe(createDispatcher, () => {
     it("renders empty known repositories in the missing repository warning", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({
-        config: makeConfig({ workspace: { projectDir: "/work", knownRepositories: [] } }),
+        config: makeConfig({
+          workspace: { projectDir: "/work", knownRepositories: [], repositories: [] },
+        }),
         board,
       });
 
