@@ -79,6 +79,15 @@ const SHELL_RAW_FULL = {
     markDone: "jira move ${id} 'Done'",
   },
 };
+const SHELL_RAW_CREATE_VALIDATE = {
+  kind: "shell",
+  name: "plans",
+  commands: {
+    fetch: "./fetch.sh",
+    createTask: "./create.sh ${title}",
+    validate: "./validate.sh",
+  },
+};
 
 describe("sourceCli dispatch", () => {
   it("throws with usage for an unknown subcommand", async () => {
@@ -174,6 +183,21 @@ describe("crew source list", () => {
     expect(output).toContain('"createTask": false');
     expect(output).toContain('"markDone": false');
     expect(output).toContain('"validate": false');
+  });
+
+  it("reports shell createTask and validate capabilities when configured", async () => {
+    sourcesFromConfigMock.mockReturnValue([SHELL_RAW_CREATE_VALIDATE]);
+    const log = captureConsoleLog();
+    try {
+      await sourceCli(["list", "--json"]);
+    } finally {
+      log.restore();
+    }
+
+    const output = log.output();
+    expect(output).toContain('"name": "plans"');
+    expect(output).toContain('"createTask": true');
+    expect(output).toContain('"validate": true');
   });
 
   it("shows todo-txt source with full capabilities", async () => {

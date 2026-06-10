@@ -8,7 +8,7 @@ import { captureConsoleError } from "../../../testHelpers/consoleCapture.ts";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
-import type { Issue as CanonicalIssue } from "../../taskSource.ts";
+import type { CreateTaskInput, Issue as CanonicalIssue } from "../../taskSource.ts";
 
 import { createShellTaskSource, toCanonicalIssue } from "./factory.ts";
 import type { ShellIssue } from "./schema.ts";
@@ -171,6 +171,18 @@ describe(toCanonicalIssue, () => {
 
 function payload(issue: ShellIssue): string {
   return JSON.stringify([issue]);
+}
+
+function createInput(overrides: Partial<CreateTaskInput> = {}): CreateTaskInput {
+  return {
+    title: "Title",
+    agent: "any",
+    projects: [],
+    contexts: [],
+    dependencies: [],
+    edit: false,
+    ...overrides,
+  };
 }
 
 describe(createShellTaskSource, () => {
@@ -631,5 +643,281 @@ describe(createShellTaskSource, () => {
       err.restore();
     }
     expect(err.output()).toContain("commands.resolveOne is ignored");
+  });
+
+  it("createTask is absent on the source when commands.createTask is unset", () => {
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
+      fakeContext,
+    );
+    expect(source.createTask).toBeUndefined();
+  });
+
+  it("createTask is present on the source when commands.createTask is set", () => {
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'", createTask: "echo '{}'" } },
+      fakeContext,
+    );
+    expect(source.createTask).toBeDefined();
+  });
+
+  it("createTask expands every scalar (empty string for absent optionals), comma-joins list fields, and shell-quotes args", async () => {
+    const capture = path.join(dir.path, "create-args.txt");
+    // printf '%s\n' "$@" writes each received positional arg on its own line —
+    // empty args become blank lines, proving the empty-string substitutions and
+    // the shell-quoting (a spaced title arrives as ONE arg, not two).
+    const createScript = dir.writeScript(
+      "create.sh",
+      `printf '%s\\n' "$@" > "${capture}"\ncat <<'JSON'\n${JSON.stringify(
+        shellIssue({ id: "NEW-1" }),
+      )}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: {
+          fetch: "echo '[]'",
+          createTask: `${createScript} \${title} \${agent} \${repo} \${team} \${id} \${priority} \${due} \${recurrence} \${promptFile} \${description} \${edit} \${projects} \${contexts} \${dependencies}`,
+        },
+      },
+      fakeContext,
+    );
+
+    const created = await source.createTask?.(
+      createInput({
+        title: "My Task",
+        agent: "claude",
+        repository: "org/repo",
+        priority: "A",
+        projects: ["proj1", "proj2"],
+        contexts: ["ctx1"],
+        dependencies: ["dep1", "dep2"],
+      }),
+    );
+
+    const expectedArgs = [
+      "My Task",
+      "claude",
+      "org/repo",
+      "",
+      "",
+      "A",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "proj1,proj2",
+      "ctx1",
+      "dep1,dep2",
+    ];
+    expect(readFileSync(capture, "utf8")).toBe(`${expectedArgs.join("\n")}\n`);
+    // The returned ShellIssue is parsed and converted to a canonical issue.
+    expect(created?.id).toBe("test:new-1");
+    expect(created?.source).toBe("test");
+  });
+
+  it("createTask exposes input.repository under both ${repo} and ${repository}", async () => {
+    const capture = path.join(dir.path, "create-repo.txt");
+    const createScript = dir.writeScript(
+      "create-repo.sh",
+      `printf '%s\\n' "$1" "$2" > "${capture}"\ncat <<'JSON'\n${JSON.stringify(
+        shellIssue({ id: "NEW-3" }),
+      )}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", createTask: `${createScript} \${repo} \${repository}` },
+      },
+      fakeContext,
+    );
+
+    await source.createTask?.(createInput({ repository: "org/repo" }));
+
+    expect(readFileSync(capture, "utf8")).toBe("org/repo\norg/repo\n");
+  });
+
+  it('createTask substitutes edit as the string "true" when input.edit is true', async () => {
+    const capture = path.join(dir.path, "create-edit.txt");
+    const createScript = dir.writeScript(
+      "create-edit.sh",
+      `printf '%s' "$1" > "${capture}"\ncat <<'JSON'\n${JSON.stringify(
+        shellIssue({ id: "NEW-2" }),
+      )}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", createTask: `${createScript} \${edit}` },
+      },
+      fakeContext,
+    );
+
+    await source.createTask?.(createInput({ edit: true }));
+
+    expect(readFileSync(capture, "utf8")).toBe("true");
+  });
+
+  it("createTask throws on a nonzero exit", async () => {
+    const createScript = dir.writeScript("create-fail.sh", 'echo "boom" >&2; exit 1');
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", createTask: createScript },
+      },
+      fakeContext,
+    );
+    await expect(source.createTask?.(createInput())).rejects.toThrow(/boom/);
+  });
+
+  it("createTask throws when the script produces no output", async () => {
+    const createScript = dir.writeScript("create-empty.sh", "exit 0");
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", createTask: createScript },
+      },
+      fakeContext,
+    );
+    await expect(source.createTask?.(createInput())).rejects.toThrow(/no output/i);
+  });
+
+  // invokeShellCommand resolves (does not throw) on exit 3 — its lookup
+  // "not found" sentinel. Creation has no not-found concept, so exit 3 must
+  // be a hard failure rather than a silently-parsed (or empty) result.
+  it("createTask throws on exit 3 (the lookup not-found sentinel)", async () => {
+    const createScript = dir.writeScript("create-nf.sh", "exit 3");
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", createTask: createScript },
+      },
+      fakeContext,
+    );
+    await expect(source.createTask?.(createInput())).rejects.toThrow(/exited 3/);
+  });
+
+  it("validate is absent on the source when commands.validate is unset", () => {
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
+      fakeContext,
+    );
+    expect(source.validate).toBeUndefined();
+  });
+
+  it("validate is present on the source when commands.validate is set", () => {
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'", validate: "echo '[]'" } },
+      fakeContext,
+    );
+    expect(source.validate).toBeDefined();
+  });
+
+  it("validate returns [] for empty stdout", async () => {
+    const validateScript = dir.writeScript("validate-empty.sh", "exit 0");
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", validate: validateScript },
+      },
+      fakeContext,
+    );
+    await expect(source.validate?.()).resolves.toStrictEqual([]);
+  });
+
+  it("validate returns [] for a JSON empty array", async () => {
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'", validate: "echo '[]'" } },
+      fakeContext,
+    );
+    await expect(source.validate?.()).resolves.toStrictEqual([]);
+  });
+
+  it("validate returns the parsed error array", async () => {
+    const validateScript = dir.writeScript(
+      "validate-errors.sh",
+      `cat <<'JSON'\n["error one","error two"]\nJSON`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", validate: validateScript },
+      },
+      fakeContext,
+    );
+    await expect(source.validate?.()).resolves.toStrictEqual(["error one", "error two"]);
+  });
+
+  it("validate returns a one-element error array (does not throw) on a nonzero exit", async () => {
+    const validateScript = dir.writeScript(
+      "validate-fail.sh",
+      'echo "validator crashed" >&2; exit 1',
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", validate: validateScript },
+      },
+      fakeContext,
+    );
+    const errors = await source.validate?.();
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]).toMatch(/validate command failed/);
+    expect(errors?.[0]).toMatch(/validator crashed/);
+  });
+
+  it("validate returns a one-element error array (does not throw) on exit 3", async () => {
+    const validateScript = dir.writeScript("validate-nf.sh", "exit 3");
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", validate: validateScript },
+      },
+      fakeContext,
+    );
+    const errors = await source.validate?.();
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]).toMatch(/exited 3/);
+  });
+
+  it("validate returns a one-element error array (does not throw) on malformed stdout", async () => {
+    const validateScript = dir.writeScript("validate-bad.sh", 'echo "not json"');
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", validate: validateScript },
+      },
+      fakeContext,
+    );
+    const errors = await source.validate?.();
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]).toMatch(/validate command failed/);
+  });
+
+  it("validate returns a one-element error array when stdout is a non-string-array JSON payload", async () => {
+    const validateScript = dir.writeScript("validate-shape.sh", `echo '[1, 2, 3]'`);
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", validate: validateScript },
+      },
+      fakeContext,
+    );
+    const errors = await source.validate?.();
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]).toMatch(/validate command failed/);
   });
 });

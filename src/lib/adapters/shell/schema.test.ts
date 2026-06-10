@@ -1,6 +1,11 @@
 /* eslint-disable no-template-curly-in-string -- ${id}-style placeholders appear in config command strings for the shell adapter's substitution mechanism */
 
-import { shellAdapterConfigSchema, shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
+import {
+  shellAdapterConfigSchema,
+  shellFetchOutputSchema,
+  shellIssueSchema,
+  shellValidateOutputSchema,
+} from "./schema.ts";
 
 describe("shell issue schema", () => {
   it("accepts a fully-formed shell issue", () => {
@@ -281,5 +286,77 @@ describe("shell adapter config schema", () => {
       timeouts: { markDone: 0 },
     };
     expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/too small|>0/i);
+  });
+
+  it("accepts commands.createTask and commands.validate", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: {
+        fetch: "./fetch.sh",
+        createTask: "./create.sh ${title}",
+        validate: "./validate.sh",
+      },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
+  });
+
+  it("accepts a config with createTask and validate omitted (still valid)", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+    };
+    const parsed = shellAdapterConfigSchema.parse(config);
+    expect(parsed.commands.createTask).toBeUndefined();
+    expect(parsed.commands.validate).toBeUndefined();
+  });
+
+  it("accepts timeouts.createTask and timeouts.validate", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { createTask: 45_000, validate: 20_000 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
+  });
+
+  it("rejects a zero createTask timeout", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { createTask: 0 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/too small|>0/i);
+  });
+
+  it("rejects a zero validate timeout", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { validate: 0 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/too small|>0/i);
+  });
+});
+
+describe("shell validate output schema", () => {
+  it("accepts an array of error strings", () => {
+    expect(() => shellValidateOutputSchema.parse(["error one", "error two"])).not.toThrow();
+  });
+
+  it("accepts an empty array", () => {
+    expect(() => shellValidateOutputSchema.parse([])).not.toThrow();
+  });
+
+  it("rejects a non-array", () => {
+    expect(() => shellValidateOutputSchema.parse({ error: "x" })).toThrow(/.+/);
+  });
+
+  it("rejects an array containing non-strings", () => {
+    expect(() => shellValidateOutputSchema.parse(["ok", 42])).toThrow(/.+/);
   });
 });
