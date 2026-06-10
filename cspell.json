@@ -1,5 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "useGitignore": true,
   "ignorePaths": [
     ".claude/setup.sh",
     "knip.json",
@@ -114,8 +115,6 @@
     "venv",
     "vitest",
     "linecap",
-    "palettegen",
-    "paletteuse",
     "rasterizing",
     "Logomark",
     "logomark",
@@ -142,6 +141,9 @@
     "unparseable",
     "nostatus",
     "norec",
-    "nodone"
+    "nodone",
+    "linejoin",
+    "Neue",
+    "qlmanage"
   ]
 }
