@@ -71,7 +71,7 @@ graft repo add ~/dev/owner/monorepo
 graft alias add billing services/billing libs/common
 ```
 
-`crew doctor` then verifies the first token of each `provision.create` template (e.g. `graft`) is on the host PATH.
+`crew doctor` does not parse or validate provisioner templates; if your setup is more than a simple command, put it in a wrapper script and call that from `provision.create` / `provision.remove`.
 
 ## Config Discovery
 

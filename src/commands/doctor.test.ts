@@ -1,4 +1,3 @@
-/* eslint-disable no-template-curly-in-string -- scripted-repo fixtures use literal `${branch}` templates */
 import { existsSync, statSync } from "node:fs";
 
 import { type Board, createBoard } from "../lib/board.ts";
@@ -780,29 +779,5 @@ describe(doctor, () => {
     const lines = consoleLog.output();
     expect(lines).toMatch(/requested=cmux/);
     expect(lines).toContain("cmux binary is not on PATH");
-  });
-
-  it("fails when a recipe's create binary is missing from PATH", async () => {
-    loadConfigMock.mockResolvedValue({
-      ...makeConfig(),
-      workspace: {
-        projectDir: "/work",
-        knownRepositories: ["billing"],
-        repositories: [
-          {
-            name: "billing",
-            provision: { create: "graft new ${branch}", remove: "graft rm ${branch}" },
-          },
-        ],
-      },
-    });
-    mockWhichEmpty("graft");
-
-    const actual = await doctor();
-
-    expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain(
-      "[--] graft  — required by a workspace.knownRepositories provision.create template",
-    );
   });
 });

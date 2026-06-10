@@ -101,6 +101,20 @@ function makeUserInfo(username: string): ReturnType<typeof userInfo> {
   return { username, uid: 0, gid: 0, shell: null, homedir: "/tmp" };
 }
 
+function makeBillingWorkdirConfig(projectDir: string): ResolvedConfig {
+  return makeConfig({
+    projectDir,
+    knownRepositories: ["billing"],
+    repositories: [
+      {
+        name: "billing",
+        provision: { create: "create ${dir}", remove: "remove ${dir}" },
+        workdir: "services/api",
+      },
+    ],
+  });
+}
+
 function hasArguments(arguments_: readonly string[], ...needles: readonly string[]): boolean {
   return needles.every((needle) => arguments_.includes(needle));
 }
@@ -697,18 +711,16 @@ describe(create, () => {
     );
   });
 
-  it("fails fast when the configured workdir is missing after create", async () => {
+  it("removes the worktree when the configured workdir is missing after create", async () => {
     runCommandMock.mockReturnValue("");
-    const config = makeConfig({
-      projectDir,
-      knownRepositories: ["billing"],
-      repositories: [
-        { name: "billing", provision: { create: "true", remove: "true" }, workdir: "services/api" },
-      ],
-    });
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    const config = makeBillingWorkdirConfig(projectDir);
 
     await expect(create(config, { repository: "billing", task: "team-220" })).rejects.toThrow(
       /workdir "services\/api" not found/,
+    );
+    expect(runCommandMock.mock.calls.map((call) => call[1][1])).toContain(
+      `remove '${worktreeDir}'`,
     );
   });
 
@@ -732,23 +744,22 @@ describe(create, () => {
     expect(entry.dir).toBe(path.join(projectDir, "billing-team-220"));
   });
 
-  it("fails fast when the configured workdir is a file after create", async () => {
-    const config = makeConfig({
-      projectDir,
-      knownRepositories: ["billing"],
-      repositories: [
-        { name: "billing", provision: { create: "true", remove: "true" }, workdir: "services/api" },
-      ],
-    });
-    // The create template leaves a file (not a directory) at the workdir path.
-    runCommandMock.mockImplementation(() => {
-      mkdirSync(path.join(projectDir, "billing-team-220", "services"), { recursive: true });
-      writeFileSync(path.join(projectDir, "billing-team-220", "services", "api"), "");
-      return "";
-    });
+  it("removes the worktree when the configured workdir is a file after create", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    const config = makeBillingWorkdirConfig(projectDir);
+    runCommandMock
+      .mockImplementationOnce(() => {
+        mkdirSync(path.join(worktreeDir, "services"), { recursive: true });
+        writeFileSync(path.join(worktreeDir, "services", "api"), "");
+        return "";
+      })
+      .mockReturnValue("");
 
     await expect(create(config, { repository: "billing", task: "team-220" })).rejects.toThrow(
       /workdir "services\/api" not found/,
+    );
+    expect(runCommandMock.mock.calls.map((call) => call[1][1])).toContain(
+      `remove '${worktreeDir}'`,
     );
   });
 });

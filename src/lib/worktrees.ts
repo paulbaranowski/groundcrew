@@ -637,7 +637,12 @@ async function create(
     throw new WorktreeAlreadyExistsError(existing.dir);
   }
   const entry = await createWorktree(config, spec, signal);
-  assertWorkdirPresent(config, entry);
+  try {
+    assertWorkdirPresent(config, entry);
+  } catch (error) {
+    await removeWorktree(config, entry, { force: true, ...signalProperty(signal) });
+    throw error;
+  }
   return entry;
 }
 

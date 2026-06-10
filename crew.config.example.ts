@@ -48,7 +48,7 @@ export default {
     // Set up graft once outside groundcrew:
     //   graft repo add ~/dev/owner/monorepo
     //   graft alias add billing services/billing libs/common
-    // `crew doctor` then checks `graft` is on the host PATH.
+    // `crew doctor` does not parse or validate these shell templates.
   },
   models: {
     default: "claude",
