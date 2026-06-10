@@ -1901,10 +1901,7 @@ function resolvedConfigWithWorkspace(workspace: ResolvedConfig["workspace"]): Re
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    agents: {
-      default: "claude",
-      definitions: { claude: { cmd: "claude", color: "#fff" } },
-    },
+    agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
@@ -1921,11 +1918,7 @@ describe("workspace path accessors", () => {
   });
 
   it("worktreeBaseDir prefers worktreeDir when set", () => {
-    const config = resolved({
-      projectDir: "/p",
-      worktreeDir: "/w",
-      knownRepositories: ["a"],
-    });
+    const config = resolved({ projectDir: "/p", worktreeDir: "/w", knownRepositories: ["a"] });
     expect(worktreeBaseDir(config)).toBe("/w");
   });
 
