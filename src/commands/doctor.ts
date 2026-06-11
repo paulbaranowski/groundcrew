@@ -55,11 +55,8 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
 }
 
 /**
- * Source-agnostic reachability check: build every configured task source
- * and run the Board's `verify()` fan-out. Replaces the old Linear-only
- * "api key + reachability" probe so a misconfigured shell (or future Jira)
- * source surfaces here too. A missing Linear API key still fails verify with
- * its own user-facing message, so the prior behavior is preserved.
+ * True when a raw source config entry declares `kind: "shell"`. Gates the
+ * shell-only deep probe (listTasks output validation + getTask round-trip).
  */
 function isShellSource(raw: unknown): boolean {
   return typeof raw === "object" && raw !== null && (raw as { kind?: unknown }).kind === "shell";
