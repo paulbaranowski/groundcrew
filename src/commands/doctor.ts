@@ -5,7 +5,6 @@
 
 import { existsSync, statSync } from "node:fs";
 
-import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import {
   type ConfigSourceKind,
@@ -18,6 +17,7 @@ import {
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { isEnvironmentAssignment } from "../lib/launchCommand.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
+import type { TaskSource } from "../lib/taskSource.ts";
 import { gatedAgents } from "../lib/usage.ts";
 import { errorMessage, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
@@ -61,19 +61,56 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
  * source surfaces here too. A missing Linear API key still fails verify with
  * its own user-facing message, so the prior behavior is preserved.
  */
-async function checkSourceProbe(config: ResolvedConfig): Promise<Check> {
+function isShellSource(raw: unknown): boolean {
+  return typeof raw === "object" && raw !== null && (raw as { kind?: unknown }).kind === "shell";
+}
+
+/**
+ * Probe each configured task source independently and emit one `Check` per
+ * source (named `source: <name>`), so a single broken source is attributable
+ * instead of hidden behind an aggregate "N source(s) verified" line.
+ *
+ * Every source runs its `verify()`. Shell sources are additionally deep-probed
+ * via `listTasks()`: their `verify` command can discard stdout (e.g.
+ * `... fetch >/dev/null`), so a malformed task payload sails through verify and
+ * only blows up later in `crew run`. Running listTasks here surfaces a
+ * wrong-shape payload (a `TaskSourceOutputError` with a readable message) at
+ * doctor time. Non-shell sources (Linear) are left to `verify()` alone — their
+ * fetch is an expensive network call that verify already exercises.
+ */
+async function checkSourceProbes(config: ResolvedConfig): Promise<Check[]> {
+  const rawSources = sourcesFromConfig(config);
+  let sources: TaskSource[];
   try {
-    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
-    const board: Board = createBoard(sources);
-    await board.verify();
-    return {
-      name: "source probe",
-      ok: true,
-      required: true,
-      hint: `${sources.length} source(s) verified`,
-    };
+    sources = await buildSources(rawSources, { globalConfig: config });
   } catch (error) {
-    return { name: "source probe", ok: false, required: true, hint: errorMessage(error) };
+    // Building sources failed before any individual probe (bad config / unknown
+    // kind). Surface it as a single failed check rather than per-source.
+    return [{ name: "sources", ok: false, required: true, hint: errorMessage(error) }];
+  }
+  if (sources.length === 0) {
+    return [{ name: "sources", ok: false, required: true, hint: "no task sources configured" }];
+  }
+  const checks: Check[] = [];
+  for (const [index, source] of sources.entries()) {
+    const shell = isShellSource(rawSources[index]);
+    // oxlint-disable-next-line no-await-in-loop -- sequential keeps each verdict attributable to one source
+    checks.push(await probeSource(source, shell));
+  }
+  return checks;
+}
+
+async function probeSource(source: TaskSource, shell: boolean): Promise<Check> {
+  const name = `source: ${source.name}`;
+  try {
+    await source.verify();
+    if (shell) {
+      const tasks = await source.listTasks();
+      return { name, ok: true, required: true, hint: `verified; fetched ${tasks.length} task(s)` };
+    }
+    return { name, ok: true, required: true, hint: "verified" };
+  } catch (error) {
+    return { name, ok: false, required: true, hint: errorMessage(error) };
   }
 }
 
@@ -220,7 +257,7 @@ export async function doctor(): Promise<boolean> {
   reportWorkspaceKind(config, workspaceOutcome);
 
   const checks: Check[] = [
-    await checkSourceProbe(config),
+    ...(await checkSourceProbes(config)),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),

@@ -84,6 +84,7 @@
     "pipefail",
     "Pipfile",
     "pipenv",
+    "plankeeper",
     "pmem",
     "prereqs",
     "productionresultssa",
