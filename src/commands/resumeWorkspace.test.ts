@@ -192,7 +192,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", clearance: true },
+    local: { runner: "auto", clearance: { enabled: true } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -408,7 +408,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
-    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const, clearance: true } };
+    const srtConfig = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, clearance: { enabled: true } },
+    };
 
     await resumeWorkspace(srtConfig, { task: "team-1" });
 
@@ -428,7 +431,7 @@ describe(resumeWorkspace, () => {
   it("wraps with bare safehouse and skips the clearance daemon when local.clearance is false", async () => {
     const noClearance = {
       ...makeConfig(),
-      local: { runner: "safehouse" as const, clearance: false },
+      local: { runner: "safehouse" as const, clearance: { enabled: false } },
     };
 
     await resumeWorkspace(noClearance, { task: "team-1" });
@@ -443,7 +446,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("fails loudly when clearance is disabled under the srt runner", async () => {
-    const srtNoClearance = { ...makeConfig(), local: { runner: "srt" as const, clearance: false } };
+    const srtNoClearance = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, clearance: { enabled: false } },
+    };
 
     await expect(resumeWorkspace(srtNoClearance, { task: "team-1" })).rejects.toThrow(
       /cannot disable clearance under the srt runner/,
@@ -455,7 +461,7 @@ describe(resumeWorkspace, () => {
     // no effect: it is rejected by the same worker-env guard as with clearance on.
     const cmdOwned: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "safehouse", clearance: false },
+      local: { runner: "safehouse", clearance: { enabled: false } },
       agents: {
         default: "claude",
         definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
@@ -470,7 +476,7 @@ describe(resumeWorkspace, () => {
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "none", clearance: true },
+      local: { runner: "none", clearance: { enabled: true } },
       sources: [
         { kind: "linear" },
         {
@@ -506,7 +512,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
-    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const, clearance: true } };
+    const srtConfig = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, clearance: { enabled: true } },
+    };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 
     await expect(resumeWorkspace(srtConfig, { task: "team-1" })).rejects.toThrow("cmux down");

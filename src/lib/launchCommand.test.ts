@@ -26,7 +26,7 @@ function arguments_(
     worktreeDir,
     workingDir: worktreeDir,
     runner: "safehouse",
-    clearance: true,
+    clearanceEnabled: true,
     ...overrides,
   };
 }
@@ -1308,7 +1308,7 @@ describe(buildLaunchCommand, () => {
   describe(`${buildLaunchCommand.name} (runner='safehouse', clearance=false)`, () => {
     it("wraps both safehouse phases with the bare safehouse binary, dropping the clearance shim and proxy env", () => {
       const out = buildLaunchCommand(
-        arguments_({ clearance: false, prepareWorktreeCommand: "npm ci" }),
+        arguments_({ clearanceEnabled: false, prepareWorktreeCommand: "npm ci" }),
       );
 
       // Bare safehouse for both the prepareWorktree wrap (`sh -c`) and the agent
@@ -1322,7 +1322,7 @@ describe(buildLaunchCommand, () => {
     it("keeps the filesystem sandbox machinery — profile shim and flag composition — intact", () => {
       const out = buildLaunchCommand(
         arguments_({
-          clearance: false,
+          clearanceEnabled: false,
           prepareWorktreeCommand: "npm ci",
           safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
           safehouseAgentAddDirs: ["/Users/dev/v"],
@@ -1354,7 +1354,7 @@ describe(buildLaunchCommand, () => {
         buildLaunchCommand(
           arguments_({
             runner: "srt",
-            clearance: false,
+            clearanceEnabled: false,
             srtPrepareSettingsFile: "/tmp/s/prepare.json",
             srtAgentSettingsFile: "/tmp/s/agent.json",
             srtSettingsDir: "/tmp/s",

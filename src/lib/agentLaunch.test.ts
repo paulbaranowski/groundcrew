@@ -63,7 +63,7 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 function compose(overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = {}): string {
   return composeAgentLaunch({
     runner: "safehouse",
-    clearance: true,
+    clearanceEnabled: true,
     task: "team-1",
     definition: definition(),
     promptFile: "/tmp/prompt-team-1/prompt.txt",

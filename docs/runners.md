@@ -35,15 +35,15 @@ Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines
 
 `@clipboard-health/clearance` is pulled in transitively when you install groundcrew and provides the `clearance` / `clearance-ensure` bins used by Safehouse runs. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
 
-### Disabling clearance (`local.clearance: false`)
+### Disabling clearance (`local.clearance.enabled: false`)
 
-`local.clearance` (boolean, default `true`) controls whether the `safehouse` runner wraps the agent with Clearance. Set it to `false` to keep the Safehouse **filesystem sandbox** while opening **network egress** — groundcrew runs the bare `safehouse` binary instead of the `safehouse-clearance` shim, so there is no egress allowlist, no proxy env, and no clearance daemon to start:
+`local.clearance` is an object (so further egress options can be added later); its only field today is `enabled` (boolean, default `true`), which controls whether the `safehouse` runner wraps the agent with Clearance. Set `enabled: false` to keep the Safehouse **filesystem sandbox** while opening **network egress**: groundcrew runs the bare `safehouse` binary instead of the `safehouse-clearance` shim, so there is no egress allowlist, no proxy env, and no clearance daemon to start.
 
 ```ts
 // crew.config.ts
 export default {
   // ...
-  local: { runner: "safehouse", clearance: false },
+  local: { runner: "safehouse", clearance: { enabled: false } },
 } satisfies Config;
 ```
 
@@ -52,9 +52,9 @@ This is for the case where the allowlist is more friction than the egress restri
 Scope and limits:
 
 - **safehouse only.** It applies to both groundcrew-composed Safehouse wraps (the `prepareWorktree` wrap and the agent wrap).
-- **srt errors.** `clearance: false` under a resolved `srt` runner fails loudly at launch — srt has its own network policy (`allowedDomains`), not Clearance.
+- **srt errors.** `clearance: { enabled: false }` under a resolved `srt` runner fails loudly at launch: srt has its own network policy (`allowedDomains`), not Clearance.
 - **No-op under `sdx` / `none`,** which never apply clearance.
-- **No-op when `cmd` already starts with `safehouse`** — that command owns its own wrap, so groundcrew injects nothing.
+- **No-op when `cmd` already starts with `safehouse`:** that command owns its own wrap, so groundcrew injects nothing.
 
 ## srt (Anthropic sandbox-runtime)
 

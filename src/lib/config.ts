@@ -276,15 +276,18 @@ export interface Config {
   local?: {
     runner?: LocalRunnerSetting;
     /**
-     * Whether to run the safehouse runner under Clearance (the network-egress
-     * allowlist proxy). Defaults to `true`. Set `false` to keep the Safehouse
-     * filesystem sandbox but open network egress (bare `safehouse`, no proxy
-     * env, no deny-all-remote profile, no clearance daemon). Only affects the
-     * resolved `safehouse` runner: `srt` rejects it at launch (use srt's own
-     * `allowedDomains`), and it is a no-op under `sdx`/`none` and when `cmd`
-     * already starts with `safehouse`.
+     * Clearance (network-egress allowlist proxy) options for the safehouse
+     * runner. An object so further egress options can be added later;
+     * `enabled` is the only field today.
+     *
+     * `enabled` defaults to `true`. Set `{ enabled: false }` to keep the
+     * Safehouse filesystem sandbox but open network egress (bare `safehouse`,
+     * no proxy env, no deny-all-remote profile, no clearance daemon). Only
+     * affects the resolved `safehouse` runner: `srt` rejects it at launch (use
+     * srt's own `allowedDomains`), and it is a no-op under `sdx`/`none` and when
+     * `cmd` already starts with `safehouse`.
      */
-    clearance?: boolean;
+    clearance?: { enabled?: boolean };
   };
   logging?: {
     /**
@@ -352,12 +355,12 @@ export interface ResolvedConfig {
   local: {
     runner: LocalRunnerSetting;
     /**
-     * Whether the safehouse runner wraps the agent with Clearance. Always
-     * present — defaults to `true`. `false` opens network egress while keeping
-     * the filesystem sandbox. The runner cross-check (srt rejection) is deferred
-     * to launch, since `runner` may still be `"auto"` here.
+     * Resolved Clearance options for the safehouse runner. Always present;
+     * `enabled` defaults to `true`. `enabled: false` opens network egress while
+     * keeping the filesystem sandbox. The runner cross-check (srt rejection) is
+     * deferred to launch, since `runner` may still be `"auto"` here.
      */
-    clearance: boolean;
+    clearance: { enabled: boolean };
   };
   logging: {
     file: string;
@@ -664,14 +667,20 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
   return value;
 }
 
-function normalizeClearance(value: unknown, configKey: string): boolean {
+function normalizeClearance(value: unknown, configKey: string): { enabled: boolean } {
   if (value === undefined) {
-    return true;
+    return { enabled: true };
   }
-  if (typeof value !== "boolean") {
-    fail(`${configKey} must be a boolean (got ${JSON.stringify(value)})`);
+  if (!isPlainObject(value)) {
+    fail(
+      `${configKey} must be an object, for example { enabled: false } (got ${JSON.stringify(value)})`,
+    );
   }
-  return value;
+  const { enabled } = value;
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    fail(`${configKey}.enabled must be a boolean (got ${JSON.stringify(enabled)})`);
+  }
+  return { enabled: enabled ?? true };
 }
 
 function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
