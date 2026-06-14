@@ -487,8 +487,6 @@ interface LaunchCommandArguments {
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "srt") {
-    // `clearanceEnabled` is a safehouse-only concern; srt enforces its own
-    // network allowlist and ignores it.
     return buildSrtLaunchCommand(arguments_);
   }
   if (arguments_.runner === "sdx") {

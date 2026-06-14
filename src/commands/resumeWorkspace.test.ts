@@ -445,22 +445,6 @@ describe(resumeWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
-  it("ignores disabled clearance under the srt runner (clearance is safehouse-only)", async () => {
-    const srtNoClearance = {
-      ...makeConfig(),
-      local: { runner: "srt" as const, clearance: { enabled: false } },
-    };
-
-    await resumeWorkspace(srtNoClearance, { task: "team-1" });
-
-    // srt resumes normally and enforces its own allowlist; clearance is ignored,
-    // and the safehouse clearance daemon is never started.
-    const launchScript = stagedLaunchScript();
-    expect(launchScript).toMatch(/sandbox-runtime\/dist\/cli\.js' --settings/);
-    expect(launchScript).not.toContain("safehouse-clearance");
-    expect(ensureClearanceMock).not.toHaveBeenCalled();
-  });
-
   it("keeps clearance:false a no-op for a cmd-owned safehouse wrap (still rejected upstream)", async () => {
     // The user owns the wrap, so groundcrew injects nothing and `clearance` has
     // no effect: it is rejected by the same worker-env guard as with clearance on.

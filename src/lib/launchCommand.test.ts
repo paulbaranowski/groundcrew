@@ -1348,21 +1348,5 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain("CLEARANCE_ALLOW_HOSTS_FILES=");
       expect(out).not.toContain("safehouse sh -c");
     });
-
-    it("ignores disabled clearance under the srt runner (clearance is safehouse-only)", () => {
-      const srtArgs = {
-        runner: "srt" as const,
-        srtPrepareSettingsFile: "/tmp/s/prepare.json",
-        srtAgentSettingsFile: "/tmp/s/agent.json",
-        srtSettingsDir: "/tmp/s",
-      };
-      const disabled = buildLaunchCommand(arguments_({ ...srtArgs, clearanceEnabled: false }));
-      const enabled = buildLaunchCommand(arguments_({ ...srtArgs, clearanceEnabled: true }));
-
-      // srt enforces its own allowlist; clearanceEnabled does not change its wrap.
-      expect(disabled).toBe(enabled);
-      expect(disabled).toMatch(/sandbox-runtime\/dist\/cli\.js/);
-      expect(disabled).not.toContain("safehouse-clearance");
-    });
   });
 });

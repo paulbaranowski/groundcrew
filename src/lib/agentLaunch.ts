@@ -151,20 +151,12 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
-  // `clearance` is a safehouse-only option; srt/sdx/none ignore it (srt enforces
-  // its own network allowlist regardless). Only safehouse reads `clearanceEnabled`.
   const clearanceEnabled = input.config.local.clearance.enabled;
   const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
-  // A `safehouse`-prefixed cmd owns its own wrap: groundcrew composes nothing for
-  // such a cmd (and rejects it below), so `local.clearance` must stay a true
-  // no-op there.
   const cmdOwnsSafehouseWrap = /^safehouse(?:\s|$)/.test(input.definition.cmd);
-  // Clearance-off keeps the filesystem sandbox but skips the proxy daemon. The
-  // daemon backs only groundcrew-composed safehouse wraps with clearance enabled;
-  // for a cmd-owned wrap the daemon decision is left as-is (not gated on
-  // `clearanceEnabled`) so disabling clearance cannot skip a daemon that wrap may
-  // rely on.
+  // `cmdOwnsSafehouseWrap` keeps `clearanceEnabled: false` from skipping the
+  // daemon for a user-owned safehouse wrap, which may rely on it.
   const ensureReady =
     runner === "safehouse" && (clearanceEnabled || cmdOwnsSafehouseWrap)
       ? async (): Promise<void> => {
